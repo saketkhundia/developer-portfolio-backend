@@ -5,15 +5,10 @@ from analytics import calculate_skill_score
 
 app = FastAPI()
 
-# 🔥 IMPORTANT: allow everything (for mobile + web)
-origins = [
-    "*"
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=False,  # IMPORTANT: must be False when using "*"
+    allow_origins=["*"],
+    allow_credentials=False,  # MUST be False
     allow_methods=["*"],
     allow_headers=["*"],
 )
