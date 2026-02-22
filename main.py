@@ -4,43 +4,58 @@ from fastapi.responses import JSONResponse
 import traceback
 
 # Import your logic
-from github import fetch_github_data
-from analytics import calculate_skill_score
+try:
+    from github import fetch_github_data
+    from analytics import calculate_skill_score
+except ImportError as e:
+    print(f"IMPORT ERROR: {e}")
 
 app = FastAPI()
 
-# ✅ FORCE CORS FOR EVERYTHING
+# Standard Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=[
+        "http://localhost:3000",  # local development
+        "https://developerintelligence.vercel.app",  # production frontend
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ✅ Catch-all error handler to prevent "No Access-Control-Allow-Origin"
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"status": "error", "message": str(exc), "trace": traceback.format_exc()},
-        headers={"Access-Control-Allow-Origin": "*"} # Manually inject header
-    )
+# ✅ This catch-all prevents the "No Access-Control-Allow-Origin" error
+@app.middleware("http")
+async def add_cors_header(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 @app.get("/")
 def home():
-    return {"message": "API is Live"}
+    return {"status": "online", "message": "API is Live"}
 
 @app.get("/analyze/{username}")
-def analyze(username: str):
-    # Log the request in Render logs so you can see it working
-    print(f"Request received for user: {username}")
-    
-    repos = fetch_github_data(username)
-    analytics = calculate_skill_score(repos)
+async def analyze(username: str):
+    print(f"--- Analyzing User: {username} ---")
+    try:
+        repos = fetch_github_data(username)
+        print(f"Fetched {len(repos)} repos")
+        
+        analytics = calculate_skill_score(repos)
+        print("Analytics calculated successfully")
 
-    return {
-        "username": username,
-        "analytics": analytics,
-        "repositories": repos
-    }
+        return {
+            "username": username,
+            "analytics": analytics,
+            "repositories": repos
+        }
+    except Exception as e:
+        print(f"CRASH ERROR: {str(e)}")
+        print(traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal Server Error", "details": str(e)}
+        )
