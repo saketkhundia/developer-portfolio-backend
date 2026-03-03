@@ -1,4 +1,13 @@
 import requests
+import os
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
+
+def get_headers():
+    headers = {"Accept": "application/vnd.github.v3+json"}
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"token {GITHUB_TOKEN}"
+    return headers
 
 def fetch_github_data(username: str):
     all_repos = []
@@ -6,14 +15,13 @@ def fetch_github_data(username: str):
 
     while True:
         url = f"https://api.github.com/users/{username}/repos?per_page=100&page={page}"
-        response = requests.get(url)
+        response = requests.get(url, headers=get_headers())
 
         if response.status_code != 200:
             break
 
         repos = response.json()
 
-        # If no more repos, stop loop
         if not repos:
             break
 
