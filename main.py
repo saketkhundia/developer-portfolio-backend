@@ -11,6 +11,7 @@ try:
     from analytics import calculate_skill_score
     from leetcode import fetch_leetcode_data
     from codeforces import fetch_codeforces_data
+    from contributions import fetch_contributions
 except ImportError as e:
     print(f"IMPORT ERROR: {e}")
 
@@ -63,6 +64,19 @@ async def codeforces(handle: str):
         else:
             data = fetch_codeforces_data(handle)
         if isinstance(data, dict) and data.get("error"):
+            return JSONResponse(status_code=404, content=data)
+        return data
+    except Exception as e:
+        print(traceback.format_exc())
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/contributions/{username}")
+async def contributions(username: str):
+    try:
+        import inspect
+        from contributions import fetch_contributions
+        data = await fetch_contributions(username)
+        if data.get("error"):
             return JSONResponse(status_code=404, content=data)
         return data
     except Exception as e:
