@@ -864,6 +864,7 @@ async def sync_profile(request: Request, response: Response):
         body = await request.json()
         
         print(f"[SYNC] User {user['email']} (ID: {user_id}) syncing profile")
+        print(f"[SYNC] Received data: bio={body.get('bio')}, website={body.get('website')}, location={body.get('location')}")
         print(f"[SYNC] Received data: recentAnalyses={len(body.get('recentAnalyses', []))}, "
               f"following={len(body.get('following', []))}, "
               f"notifications={len(body.get('notifications', []))}")
@@ -904,6 +905,8 @@ async def sync_profile(request: Request, response: Response):
             'lastPracticeProblem': body.get('lastPracticeProblem')
         }
         
+        print(f"[SYNC] Snapshot being saved: website={profile_snapshot.get('website')}, location={profile_snapshot.get('location')}")
+        
         # Save profile snapshot
         snapshot_id = db.save_user_profile(user_id, profile_snapshot)
         print(f"[SYNC] Saved profile snapshot ID: {snapshot_id} with {len(profile_snapshot['recentAnalyses'])} analyses")
@@ -931,6 +934,8 @@ async def sync_profile(request: Request, response: Response):
         
         # Merge profile snapshot data
         response_data.update(profile_snapshot)
+        
+        print(f"[SYNC] Response data: website={response_data.get('website')}, location={response_data.get('location')}")
         
         return {
             "message": "Profile synced to cloud",
