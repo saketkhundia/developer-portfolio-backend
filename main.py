@@ -768,6 +768,8 @@ async def get_profile(request: Request, response: Response):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
+        print(f"[LOAD] User {user['email']} (ID: {user_id}) loading profile")
+        
         profile_data = {
             "id": user["id"],
             "username": user["username"],
@@ -786,6 +788,9 @@ async def get_profile(request: Request, response: Response):
         latest_profile = db.get_latest_user_profile(user_id)
         if latest_profile:
             stored_data = latest_profile.get('data', {})
+            print(f"[LOAD] Found stored profile: recentAnalyses={len(stored_data.get('recentAnalyses', []))}, "
+                  f"following={len(stored_data.get('following', []))}, "
+                  f"notifications={len(stored_data.get('notifications', []))}")
             # Merge stored profile data with current user data
             if 'recentAnalyses' in stored_data:
                 profile_data['recentAnalyses'] = stored_data['recentAnalyses']
@@ -807,6 +812,10 @@ async def get_profile(request: Request, response: Response):
                 profile_data['weakCategories'] = stored_data['weakCategories']
             if 'lastPracticeProblem' in stored_data:
                 profile_data['lastPracticeProblem'] = stored_data['lastPracticeProblem']
+        else:
+            print(f"[LOAD] No stored profile found for user {user_id}")
+        
+        print(f"[LOAD] Returning profile with {len(profile_data.get('recentAnalyses', []))} analyses")
         
         # Cache the result
         cache_entry = set_cached_data("profile", str(user_id), profile_data)
@@ -839,6 +848,11 @@ async def sync_profile(request: Request, response: Response):
             raise HTTPException(status_code=404, detail="User not found")
         
         body = await request.json()
+        
+        print(f"[SYNC] User {user['email']} (ID: {user_id}) syncing profile")
+        print(f"[SYNC] Received data: recentAnalyses={len(body.get('recentAnalyses', []))}, "
+              f"following={len(body.get('following', []))}, "
+              f"notifications={len(body.get('notifications', []))}")
         
         # Update basic user info in database
         update_data = {}
@@ -875,7 +889,8 @@ async def sync_profile(request: Request, response: Response):
         }
         
         # Save profile snapshot
-        db.save_user_profile(user_id, profile_snapshot)
+        snapshot_id = db.save_user_profile(user_id, profile_snapshot)
+        print(f"[SYNC] Saved profile snapshot ID: {snapshot_id} with {len(profile_snapshot['recentAnalyses'])} analyses")
         
         # Add to profile history
         db.add_profile_history(user_id, "profile_sync", {"analysesCount": len(profile_snapshot['recentAnalyses'])})
