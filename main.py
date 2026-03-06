@@ -282,8 +282,8 @@ async def auth_signup(request: Request, response: Response):
             key="access_token",
             value=token,
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite="none",
+            secure=True,
             max_age=2592000 if remember_me else 86400,
             path="/"
         )
@@ -363,8 +363,8 @@ async def auth_login(request: Request, response: Response):
             key="access_token",
             value=token,
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite="none",
+            secure=True,
             max_age=2592000 if remember_me else 86400,
             path="/"
         )
@@ -524,8 +524,8 @@ async def auth_oauth(request: Request, response: Response):
             key="access_token",
             value=token,
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite="none",
+            secure=True,
             max_age=86400,
             path="/"
         )
@@ -618,8 +618,8 @@ async def auth_gmail_login(request: Request, response: Response):
             key="access_token",
             value=token,
             httponly=True,
-            samesite="lax",
-            secure=False,
+            samesite="none",
+            secure=True,
             max_age=2592000 if remember_me else 86400,
             path="/"
         )
