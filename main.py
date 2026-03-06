@@ -1378,6 +1378,139 @@ async def cache_statistics(request: Request):
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
+# ============ CONNECTED ACCOUNTS ENDPOINTS ============
+
+@app.get("/accounts/connected")
+async def get_connected_accounts_endpoint(
+    access_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = None
+):
+    """Get all connected accounts for the current user"""
+    token = extract_token(access_token, authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        accounts = db.get_connected_accounts(user_id)
+        
+        # Don't send sensitive tokens to frontend
+        safe_accounts = []
+        for acc in accounts:
+            safe_accounts.append({
+                "platform": acc["platform"],
+                "platform_username": acc.get("platform_username"),
+                "connected_at": acc["connected_at"],
+                "last_synced_at": acc.get("last_synced_at"),
+                "is_active": acc["is_active"] == 1,
+                "metadata": acc.get("metadata", {})
+            })
+        
+        return {"accounts": safe_accounts}
+    
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/accounts/connect/{platform}")
+async def connect_account_endpoint(
+    platform: str,
+    request: Request,
+    access_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = None
+):
+    """Connect a platform account (GitHub, LeetCode, Codeforces)"""
+    token = extract_token(access_token, authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        body = await request.json()
+        username = body.get("username", "").strip()
+        
+        if not username:
+            raise HTTPException(status_code=400, detail="Username required")
+        
+        # For now, we'll just store the username
+        # In production, you'd verify the account via OAuth or API
+        success = db.connect_account(
+            user_id=user_id,
+            platform=platform.lower(),
+            platform_username=username,
+            metadata={"verified": False, "manual_entry": True}
+        )
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"{platform} account connected",
+                "platform": platform.lower(),
+                "username": username
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to connect account")
+    
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/accounts/disconnect/{platform}")
+async def disconnect_account_endpoint(
+    platform: str,
+    access_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = None
+):
+    """Disconnect a platform account"""
+    token = extract_token(access_token, authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        success = db.disconnect_account(user_id, platform.lower())
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"{platform} account disconnected"
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to disconnect account")
+    
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ============ ERROR HANDLERS ============
 
 @app.exception_handler(HTTPException)

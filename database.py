@@ -88,6 +88,26 @@ def init_db():
             )
         """)
         
+        # Connected accounts table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS connected_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                platform TEXT NOT NULL,
+                platform_user_id TEXT,
+                platform_username TEXT,
+                access_token TEXT,
+                refresh_token TEXT,
+                token_expires_at TEXT,
+                connected_at TEXT NOT NULL,
+                last_synced_at TEXT,
+                is_active INTEGER DEFAULT 1,
+                metadata TEXT,
+                UNIQUE(user_id, platform),
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        """)
+        
         conn.commit()
 
 # Initialize database on import
@@ -377,3 +397,108 @@ def get_user_profile_history(user_id: int, limit: int = 10) -> list:
             })
         
         return profiles
+
+# ============ CONNECTED ACCOUNTS OPERATIONS ============
+
+def connect_account(user_id: int, platform: str, platform_user_id: str = None, 
+                   platform_username: str = None, access_token: str = None,
+                   refresh_token: str = None, token_expires_at: str = None,
+                   metadata: dict = None) -> bool:
+    """Connect or update a platform account for a user"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            now = datetime.utcnow().isoformat()
+            
+            # Check if connection exists
+            cursor.execute("""
+                SELECT id FROM connected_accounts 
+                WHERE user_id = ? AND platform = ?
+            """, (user_id, platform))
+            
+            existing = cursor.fetchone()
+            metadata_json = json.dumps(metadata) if metadata else None
+            
+            if existing:
+                # Update existing connection
+                cursor.execute("""
+                    UPDATE connected_accounts 
+                    SET platform_user_id = ?, platform_username = ?,
+                        access_token = ?, refresh_token = ?, token_expires_at = ?,
+                        last_synced_at = ?, is_active = 1, metadata = ?
+                    WHERE user_id = ? AND platform = ?
+                """, (platform_user_id, platform_username, access_token, refresh_token,
+                      token_expires_at, now, metadata_json, user_id, platform))
+            else:
+                # Insert new connection
+                cursor.execute("""
+                    INSERT INTO connected_accounts 
+                    (user_id, platform, platform_user_id, platform_username,
+                     access_token, refresh_token, token_expires_at, connected_at,
+                     last_synced_at, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, platform, platform_user_id, platform_username,
+                      access_token, refresh_token, token_expires_at, now, now,
+                      metadata_json))
+            
+            return True
+    except Exception as e:
+        print(f"Error connecting account: {e}")
+        return False
+
+def disconnect_account(user_id: int, platform: str) -> bool:
+    """Disconnect a platform account"""
+    try:
+        with get_db() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE connected_accounts 
+                SET is_active = 0
+                WHERE user_id = ? AND platform = ?
+            """, (user_id, platform))
+            return True
+    except Exception as e:
+        print(f"Error disconnecting account: {e}")
+        return False
+
+def get_connected_accounts(user_id: int) -> list:
+    """Get all connected accounts for a user"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT platform, platform_user_id, platform_username,
+                   connected_at, last_synced_at, is_active, metadata
+            FROM connected_accounts
+            WHERE user_id = ?
+        """, (user_id,))
+        
+        accounts = []
+        for row in cursor.fetchall():
+            account = dict(row)
+            if account.get('metadata'):
+                try:
+                    account['metadata'] = json.loads(account['metadata'])
+                except:
+                    account['metadata'] = {}
+            accounts.append(account)
+        return accounts
+
+def get_account_connection(user_id: int, platform: str) -> Optional[Dict[str, Any]]:
+    """Get a specific connected account"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM connected_accounts
+            WHERE user_id = ? AND platform = ? AND is_active = 1
+        """, (user_id, platform))
+        
+        row = cursor.fetchone()
+        if row:
+            account = dict(row)
+            if account.get('metadata'):
+                try:
+                    account['metadata'] = json.loads(account['metadata'])
+                except:
+                    account['metadata'] = {}
+            return account
+        return None
