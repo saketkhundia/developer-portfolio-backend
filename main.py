@@ -812,6 +812,10 @@ async def get_profile(request: Request, response: Response):
                 profile_data['analysesRun'] = stored_data['analysesRun']
             if 'displayName' in stored_data:
                 profile_data['displayName'] = stored_data['displayName']
+            if 'website' in stored_data:
+                profile_data['website'] = stored_data['website']
+            if 'location' in stored_data:
+                profile_data['location'] = stored_data['location']
             if 'joinedAt' in stored_data:
                 profile_data['joinedAt'] = stored_data['joinedAt']
             if 'avatar' in stored_data:
@@ -891,6 +895,8 @@ async def sync_profile(request: Request, response: Response):
             'notifications': body.get('notifications', []),
             'analysesRun': body.get('analysesRun', 0),
             'displayName': body.get('displayName', ''),
+            'website': body.get('website', ''),
+            'location': body.get('location', ''),
             'joinedAt': body.get('joinedAt', ''),
             'avatar': body.get('avatar', ''),
             'solvedProblems': body.get('solvedProblems', []),
