@@ -801,6 +801,8 @@ async def get_profile(request: Request, response: Response):
             print(f"[LOAD] Found stored profile: recentAnalyses={len(stored_data.get('recentAnalyses', []))}, "
                   f"following={len(stored_data.get('following', []))}, "
                   f"notifications={len(stored_data.get('notifications', []))}")
+            print(f"[LOAD] Stored website: '{stored_data.get('website', 'NOT_FOUND')}', location: '{stored_data.get('location', 'NOT_FOUND')}'")
+            print(f"[LOAD] All stored keys: {list(stored_data.keys())}")
             # Merge stored profile data with current user data
             if 'recentAnalyses' in stored_data:
                 profile_data['recentAnalyses'] = stored_data['recentAnalyses']
@@ -814,8 +816,10 @@ async def get_profile(request: Request, response: Response):
                 profile_data['displayName'] = stored_data['displayName']
             if 'website' in stored_data:
                 profile_data['website'] = stored_data['website']
+                print(f"[LOAD] Merged website into response: '{profile_data['website']}'")
             if 'location' in stored_data:
                 profile_data['location'] = stored_data['location']
+                print(f"[LOAD] Merged location into response: '{profile_data['location']}'")
             if 'joinedAt' in stored_data:
                 profile_data['joinedAt'] = stored_data['joinedAt']
             if 'avatar' in stored_data:
