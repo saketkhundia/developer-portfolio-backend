@@ -139,10 +139,16 @@ def get_token_from_request(request: Request) -> Optional[str]:
     # Try Authorization header first
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
-        return auth_header[7:]
+        token = auth_header[7:]
+        print(f"[TOKEN] Found in Authorization header: {token[:20]}...")
+        return token
     
     # Try cookies
     token = request.cookies.get("access_token")
+    if token:
+        print(f"[TOKEN] Found in cookie: {token[:20]}...")
+    else:
+        print(f"[TOKEN] No token found - headers: {list(request.headers.keys())[:5]}, cookies: {list(request.cookies.keys())}")
     return token
 
 def check_etag(request: Request, cached_etag: str) -> bool:
@@ -617,6 +623,10 @@ async def auth_gmail_login(request: Request, response: Response):
             max_age=2592000 if remember_me else 86400,
             path="/"
         )
+
+        print(f"[GMAIL LOGIN] User {email} logged in successfully (ID: {user['id']})")
+        print(f"[GMAIL LOGIN] Token created: {token[:30]}...")
+        print(f"[GMAIL LOGIN] Cookie set with max_age={2592000 if remember_me else 86400}")
 
         return {
             "access_token": token,
