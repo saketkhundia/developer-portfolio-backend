@@ -320,11 +320,16 @@ def save_user_profile(user_id: int, profile_data: Dict) -> int:
         cursor = conn.cursor()
         now = datetime.utcnow().isoformat()
         
+        json_str = json.dumps(profile_data)
+        print(f"[DB] Saving profile: user_id={user_id}, website='{profile_data.get('website')}', location='{profile_data.get('location')}'")
+        print(f"[DB] JSON to save: {json_str[:200]}...")  # First 200 chars
+        
         cursor.execute("""
             INSERT INTO user_profiles (user_id, profile_data, created_at)
             VALUES (?, ?, ?)
-        """, (user_id, json.dumps(profile_data), now))
+        """, (user_id, json_str, now))
         
+        print(f"[DB] Saved successfully")
         return cursor.lastrowid
 
 def get_latest_user_profile(user_id: int) -> Optional[Dict]:
@@ -341,8 +346,11 @@ def get_latest_user_profile(user_id: int) -> Optional[Dict]:
         
         row = cursor.fetchone()
         if row:
+            loaded_data = json.loads(row['profile_data'])
+            print(f"[DB] Loaded profile: website='{loaded_data.get('website')}', location='{loaded_data.get('location')}'")
+            print(f"[DB] All keys in loaded data: {list(loaded_data.keys())}")
             return {
-                'data': json.loads(row['profile_data']),
+                'data': loaded_data,
                 'created_at': row['created_at']
             }
         return None
