@@ -782,8 +782,31 @@ async def get_profile(request: Request, response: Response):
             "last_fetched": datetime.utcnow().isoformat()
         }
         
-        # Save profile snapshot
-        db.save_user_profile(user_id, profile_data)
+        # Get stored profile data (analysis history, following, etc.)
+        latest_profile = db.get_latest_user_profile(user_id)
+        if latest_profile:
+            stored_data = latest_profile.get('data', {})
+            # Merge stored profile data with current user data
+            if 'recentAnalyses' in stored_data:
+                profile_data['recentAnalyses'] = stored_data['recentAnalyses']
+            if 'following' in stored_data:
+                profile_data['following'] = stored_data['following']
+            if 'notifications' in stored_data:
+                profile_data['notifications'] = stored_data['notifications']
+            if 'analysesRun' in stored_data:
+                profile_data['analysesRun'] = stored_data['analysesRun']
+            if 'displayName' in stored_data:
+                profile_data['displayName'] = stored_data['displayName']
+            if 'joinedAt' in stored_data:
+                profile_data['joinedAt'] = stored_data['joinedAt']
+            if 'avatar' in stored_data:
+                profile_data['avatar'] = stored_data['avatar']
+            if 'solvedProblems' in stored_data:
+                profile_data['solvedProblems'] = stored_data['solvedProblems']
+            if 'weakCategories' in stored_data:
+                profile_data['weakCategories'] = stored_data['weakCategories']
+            if 'lastPracticeProblem' in stored_data:
+                profile_data['lastPracticeProblem'] = stored_data['lastPracticeProblem']
         
         # Cache the result
         cache_entry = set_cached_data("profile", str(user_id), profile_data)
@@ -798,7 +821,7 @@ async def get_profile(request: Request, response: Response):
 
 @app.post("/sync/profile")
 async def sync_profile(request: Request, response: Response):
-    """Sync profile data to cloud (same as PUT /profile)"""
+    """Sync complete profile data to cloud including analysis results"""
     try:
         token = get_token_from_request(request)
         
@@ -817,7 +840,7 @@ async def sync_profile(request: Request, response: Response):
         
         body = await request.json()
         
-        # Update user in database
+        # Update basic user info in database
         update_data = {}
         if "email" in body:
             update_data["email"] = body["email"]
@@ -832,13 +855,30 @@ async def sync_profile(request: Request, response: Response):
         if "profile_picture_url" in body:
             update_data["profile_picture_url"] = body.get("profile_picture_url", "")
         
-        success = db.update_user(user_id, **update_data)
+        if update_data:
+            success = db.update_user(user_id, **update_data)
+            if not success:
+                raise HTTPException(status_code=500, detail="Failed to sync profile")
         
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to sync profile")
+        # Store complete profile data (analysis history, following, notifications, etc.)
+        profile_snapshot = {
+            'recentAnalyses': body.get('recentAnalyses', []),
+            'following': body.get('following', []),
+            'notifications': body.get('notifications', []),
+            'analysesRun': body.get('analysesRun', 0),
+            'displayName': body.get('displayName', ''),
+            'joinedAt': body.get('joinedAt', ''),
+            'avatar': body.get('avatar', ''),
+            'solvedProblems': body.get('solvedProblems', []),
+            'weakCategories': body.get('weakCategories', []),
+            'lastPracticeProblem': body.get('lastPracticeProblem')
+        }
+        
+        # Save profile snapshot
+        db.save_user_profile(user_id, profile_snapshot)
         
         # Add to profile history
-        db.add_profile_history(user_id, "profile_sync", update_data)
+        db.add_profile_history(user_id, "profile_sync", {"analysesCount": len(profile_snapshot['recentAnalyses'])})
         
         # Invalidate cache
         invalidate_cache("profile", str(user_id))
@@ -846,18 +886,24 @@ async def sync_profile(request: Request, response: Response):
         # Get updated user
         updated_user = db.get_user_by_id(user_id)
         
+        # Build response with merged data
+        response_data = {
+            "id": updated_user["id"],
+            "username": updated_user["username"],
+            "email": updated_user["email"],
+            "bio": updated_user.get("bio", ""),
+            "github_username": updated_user.get("github_username", ""),
+            "leetcode_username": updated_user.get("leetcode_username", ""),
+            "codeforces_handle": updated_user.get("codeforces_handle", ""),
+            "profile_picture_url": updated_user.get("profile_picture_url", "")
+        }
+        
+        # Merge profile snapshot data
+        response_data.update(profile_snapshot)
+        
         return {
             "message": "Profile synced to cloud",
-            "user": {
-                "id": updated_user["id"],
-                "username": updated_user["username"],
-                "email": updated_user["email"],
-                "bio": updated_user.get("bio", ""),
-                "github_username": updated_user.get("github_username", ""),
-                "leetcode_username": updated_user.get("leetcode_username", ""),
-                "codeforces_handle": updated_user.get("codeforces_handle", ""),
-                "profile_picture_url": updated_user.get("profile_picture_url", "")
-            }
+            "user": response_data
         }
     except HTTPException:
         raise
