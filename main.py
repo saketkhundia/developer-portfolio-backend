@@ -19,8 +19,8 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -82,3 +82,24 @@ async def contributions(username: str):
     except Exception as e:
         print(traceback.format_exc())
         return JSONResponse(status_code=500, content={"error": str(e)})
+
+# Auth endpoints
+@app.get("/auth/me")
+async def auth_me():
+    # Placeholder: return user info if authenticated
+    return {"user": "authenticated_user", "id": 1}
+
+@app.post("/auth/oauth")
+async def auth_oauth():
+    # Placeholder: handle OAuth
+    return {"status": "oauth_handled"}
+
+@app.post("/auth/logout")
+async def auth_logout():
+    # Placeholder: handle logout
+    return {"status": "logged_out"}
+
+@app.get("/profile")
+async def get_profile():
+    # Placeholder: return user profile
+    return {"username": "user", "email": "user@example.com", "bio": "Developer"}
