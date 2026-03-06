@@ -873,12 +873,45 @@ async def sync_profile(request: Request, response: Response):
               f"following={len(body.get('following', []))}, "
               f"notifications={len(body.get('notifications', []))}")
         
+        # Load the latest stored snapshot first so we can avoid destructive overwrites
+        latest_profile = db.get_latest_user_profile(user_id)
+        existing_snapshot = latest_profile.get('data', {}) if latest_profile else {}
+
+        def keep_cloud_value_if_empty(field: str, incoming_value, default_value):
+            existing_value = existing_snapshot.get(field)
+
+            # Preserve existing non-empty strings when incoming value is empty
+            if isinstance(incoming_value, str):
+                if incoming_value.strip() == "" and isinstance(existing_value, str) and existing_value.strip() != "":
+                    return existing_value
+                return incoming_value
+
+            # Preserve existing non-empty lists when incoming list is empty
+            if isinstance(incoming_value, list):
+                if len(incoming_value) == 0 and isinstance(existing_value, list) and len(existing_value) > 0:
+                    return existing_value
+                return incoming_value
+
+            # Preserve existing non-zero numbers when incoming number is zero
+            if isinstance(incoming_value, (int, float)):
+                if incoming_value == 0 and isinstance(existing_value, (int, float)) and existing_value > 0:
+                    return existing_value
+                return incoming_value
+
+            # If key is missing in request body, keep existing snapshot value if present
+            if incoming_value is None:
+                if existing_value is not None:
+                    return existing_value
+                return default_value
+
+            return incoming_value
+
         # Update basic user info in database
         update_data = {}
         if "email" in body:
             update_data["email"] = body["email"]
         if "bio" in body:
-            update_data["bio"] = body.get("bio", "")
+            update_data["bio"] = keep_cloud_value_if_empty("bio", body.get("bio", ""), "")
         if "github_username" in body:
             update_data["github_username"] = body.get("github_username", "")
         if "leetcode_username" in body:
@@ -895,18 +928,18 @@ async def sync_profile(request: Request, response: Response):
         
         # Store complete profile data (analysis history, following, notifications, etc.)
         profile_snapshot = {
-            'recentAnalyses': body.get('recentAnalyses', []),
-            'following': body.get('following', []),
-            'notifications': body.get('notifications', []),
-            'analysesRun': body.get('analysesRun', 0),
-            'displayName': body.get('displayName', ''),
-            'website': body.get('website', ''),
-            'location': body.get('location', ''),
-            'joinedAt': body.get('joinedAt', ''),
-            'avatar': body.get('avatar', ''),
-            'solvedProblems': body.get('solvedProblems', []),
-            'weakCategories': body.get('weakCategories', []),
-            'lastPracticeProblem': body.get('lastPracticeProblem')
+            'recentAnalyses': keep_cloud_value_if_empty('recentAnalyses', body.get('recentAnalyses', []), []),
+            'following': keep_cloud_value_if_empty('following', body.get('following', []), []),
+            'notifications': keep_cloud_value_if_empty('notifications', body.get('notifications', []), []),
+            'analysesRun': keep_cloud_value_if_empty('analysesRun', body.get('analysesRun', 0), 0),
+            'displayName': keep_cloud_value_if_empty('displayName', body.get('displayName', ''), ''),
+            'website': keep_cloud_value_if_empty('website', body.get('website', ''), ''),
+            'location': keep_cloud_value_if_empty('location', body.get('location', ''), ''),
+            'joinedAt': keep_cloud_value_if_empty('joinedAt', body.get('joinedAt', ''), ''),
+            'avatar': keep_cloud_value_if_empty('avatar', body.get('avatar', ''), ''),
+            'solvedProblems': keep_cloud_value_if_empty('solvedProblems', body.get('solvedProblems', []), []),
+            'weakCategories': keep_cloud_value_if_empty('weakCategories', body.get('weakCategories', []), []),
+            'lastPracticeProblem': keep_cloud_value_if_empty('lastPracticeProblem', body.get('lastPracticeProblem'), None)
         }
         
         print(f"[SYNC] Snapshot being saved: website={profile_snapshot.get('website')}, location={profile_snapshot.get('location')}")
