@@ -66,6 +66,11 @@ def init_db():
                 expires_at TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 last_accessed TEXT NOT NULL,
+                device_name TEXT,
+                device_type TEXT,
+                ip_address TEXT,
+                user_agent TEXT,
+                is_active INTEGER DEFAULT 1,
                 FOREIGN KEY (user_id) REFERENCES users (id)
             )
         """)
@@ -168,17 +173,23 @@ def update_user(user_id: int, **kwargs) -> bool:
 
 # ============ SESSION OPERATIONS ============
 
-def create_session(user_id: int, token: str, expires_at: str) -> Optional[int]:
-    """Create a new session"""
+def create_session(user_id: int, token: str, expires_at: str, device_info: Optional[Dict] = None) -> Optional[int]:
+    """Create a new session with device tracking"""
     try:
         with get_db() as conn:
             cursor = conn.cursor()
             now = datetime.utcnow().isoformat()
             
+            device_name = device_info.get('device_name', 'Unknown') if device_info else 'Unknown'
+            device_type = device_info.get('device_type', 'Unknown') if device_info else 'Unknown'
+            ip_address = device_info.get('ip_address', '') if device_info else ''
+            user_agent = device_info.get('user_agent', '') if device_info else ''
+            
             cursor.execute("""
-                INSERT INTO sessions (user_id, token, expires_at, created_at, last_accessed)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, token, expires_at, now, now))
+                INSERT INTO sessions (user_id, token, expires_at, created_at, last_accessed,
+                                    device_name, device_type, ip_address, user_agent)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, token, expires_at, now, now, device_name, device_type, ip_address, user_agent))
             
             return cursor.lastrowid
     except sqlite3.IntegrityError:
@@ -201,12 +212,45 @@ def get_session(token: str) -> Optional[Dict[str, Any]]:
             return dict(row)
         return None
 
+def get_user_sessions(user_id: int) -> list:
+    """Get all active sessions for a user (multi-device)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, device_name, device_type, ip_address, created_at, last_accessed
+            FROM sessions 
+            WHERE user_id = ? AND is_active = 1 AND expires_at > ?
+            ORDER BY last_accessed DESC
+        """, (user_id, datetime.utcnow().isoformat()))
+        
+        rows = cursor.fetchall()
+        sessions = []
+        for row in rows:
+            sessions.append(dict(row))
+        return sessions
+
 def delete_session(token: str) -> bool:
     """Delete a session (logout)"""
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        cursor.execute("UPDATE sessions SET is_active = 0 WHERE token = ?", (token,))
         return cursor.rowcount > 0
+
+def delete_all_user_sessions(user_id: int, except_token: Optional[str] = None) -> int:
+    """Logout from all devices (except current if token provided)"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        if except_token:
+            cursor.execute(
+                "UPDATE sessions SET is_active = 0 WHERE user_id = ? AND token != ?",
+                (user_id, except_token)
+            )
+        else:
+            cursor.execute(
+                "UPDATE sessions SET is_active = 0 WHERE user_id = ?",
+                (user_id,)
+            )
+        return cursor.rowcount
 
 def cleanup_expired_sessions():
     """Remove expired sessions"""

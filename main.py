@@ -47,8 +47,8 @@ except Exception as e:
     print(f"Database init warning: {e}")
 
 # ============ AUTH HELPERS ============
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Create a JWT token and persist session"""
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None, device_info: Optional[dict] = None):
+    """Create a JWT token and persist session with device tracking"""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -57,11 +57,11 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     
-    # Persist session in database
+    # Persist session in database with device info
     try:
         user_id = data.get("user_id")
         if user_id:
-            db.create_session(user_id, encoded_jwt, expire.isoformat())
+            db.create_session(user_id, encoded_jwt, expire.isoformat(), device_info)
     except Exception as e:
         print(f"Session creation error: {e}")
     
@@ -72,9 +72,9 @@ def verify_token(token: str):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         
-        # Check if session exists in database
+        # Check if session exists and is active in database
         session = db.get_session(token)
-        if not session:
+        if not session or session.get('is_active') == 0:
             return None
         
         # Check if session expired
@@ -111,6 +111,39 @@ def add_cache_headers(response: Response, etag: str, max_age: int = 300):
     response.headers["Cache-Control"] = f"public, max-age={max_age}, must-revalidate"
     response.headers["Last-Modified"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
+def get_device_info(request: Request) -> dict:
+    """Extract device information from request"""
+    user_agent = request.headers.get("User-Agent", "")
+    
+    # Simple device detection
+    device_type = "Desktop"
+    if "mobile" in user_agent.lower():
+        device_type = "Mobile"
+    elif "tablet" in user_agent.lower():
+        device_type = "Tablet"
+    
+    # Extract device name from user agent
+    device_name = "Unknown Device"
+    if "Windows" in user_agent:
+        device_name = "Windows PC"
+    elif "Mac" in user_agent:
+        device_name = "Mac"
+    elif "Linux" in user_agent:
+        device_name = "Linux PC"
+    elif "iPhone" in user_agent:
+        device_name = "iPhone"
+    elif "iPad" in user_agent:
+        device_name = "iPad"
+    elif "Android" in user_agent:
+        device_name = "Android Device"
+    
+    return {
+        "device_name": device_name,
+        "device_type": device_type,
+        "ip_address": request.client.host if request.client else "",
+        "user_agent": user_agent[:200]  # Truncate to avoid too long strings
+    }
+
 # ============ ENDPOINTS ============
 
 @app.get("/")
@@ -128,12 +161,13 @@ async def home():
 async def auth_login(request: Request):
     """
     Login endpoint - accepts username and password
-    Returns access token in response
+    Returns access token and tracks device
     """
     try:
         body = await request.json()
         username = body.get("username")
         password = body.get("password")
+        remember_me = body.get("remember_me", False)
         
         if not username or not password:
             raise HTTPException(status_code=400, detail="Username and password required")
@@ -147,20 +181,34 @@ async def auth_login(request: Request):
         if user["password"] != password:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
-        # Create token
-        token = create_access_token({"sub": username, "user_id": user["id"]})
+        # Get device info
+        device_info = get_device_info(request)
+        
+        # Create token with longer expiry if remember_me
+        expiry = timedelta(days=30) if remember_me else None
+        token = create_access_token(
+            {"sub": username, "user_id": user["id"]},
+            expires_delta=expiry,
+            device_info=device_info
+        )
         
         # Add to profile history
-        db.add_profile_history(user["id"], "login", {"timestamp": datetime.utcnow().isoformat()})
+        db.add_profile_history(user["id"], "login", {
+            "timestamp": datetime.utcnow().isoformat(),
+            "device": device_info["device_name"],
+            "ip": device_info["ip_address"]
+        })
         
         return {
             "access_token": token,
             "token_type": "bearer",
+            "expires_in": 2592000 if remember_me else 86400,  # seconds
             "user": {
                 "id": user["id"],
                 "username": user["username"],
                 "email": user["email"]
-            }
+            },
+            "device": device_info["device_name"]
         }
     except HTTPException:
         raise
@@ -282,6 +330,71 @@ async def auth_logout(request: Request):
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Logout failed")
+
+@app.get("/auth/sessions")
+async def get_user_sessions_endpoint(request: Request):
+    """Get all active sessions (devices) for current user"""
+    try:
+        token = get_token_from_request(request)
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = payload.get("user_id")
+        sessions = db.get_user_sessions(user_id)
+        
+        return {
+            "status": "success",
+            "sessions": sessions,
+            "count": len(sessions)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to get sessions")
+
+@app.post("/auth/logout-all")
+async def logout_all_devices(request: Request):
+    """Logout from all devices"""
+    try:
+        token = get_token_from_request(request)
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = payload.get("user_id")
+        
+        # Get body to check if we should keep current session
+        body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+        keep_current = body.get("keep_current_session", False)
+        
+        # Delete all sessions (optionally except current)
+        deleted_count = db.delete_all_user_sessions(user_id, token if keep_current else None)
+        
+        # Add to history
+        db.add_profile_history(user_id, "logout_all_devices", {
+            "timestamp": datetime.utcnow().isoformat(),
+            "kept_current": keep_current,
+            "deleted_sessions": deleted_count
+        })
+        
+        return {
+            "status": "success",
+            "message": f"Logged out from {deleted_count} device(s)",
+            "devices_logged_out": deleted_count
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to logout from all devices")
 
 # ============ PROFILE ENDPOINTS ============
 
