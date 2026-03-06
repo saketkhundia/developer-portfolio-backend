@@ -16,6 +16,7 @@ try:
     from codeforces import fetch_codeforces_data
     from contributions import fetch_contributions
     from cache import get_cached_data, set_cached_data, invalidate_cache, get_cache_stats
+    import database as db
 except ImportError as e:
     print(f"IMPORT ERROR: {e}")
 
@@ -37,14 +38,17 @@ SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 24
 
-# In-memory user store (replace with database in production)
-USERS_DB = {
-    "testuser": {"id": 1, "username": "testuser", "email": "test@example.com", "password": "hashed_password"}
-}
+# Create default test user if not exists
+try:
+    if not db.get_user_by_username("testuser"):
+        db.create_user("testuser", "test@example.com", "hashed_password")
+        print("✓ Created default test user")
+except Exception as e:
+    print(f"Database init warning: {e}")
 
 # ============ AUTH HELPERS ============
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    """Create a JWT token"""
+    """Create a JWT token and persist session"""
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
@@ -52,12 +56,33 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
         expire = datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    
+    # Persist session in database
+    try:
+        user_id = data.get("user_id")
+        if user_id:
+            db.create_session(user_id, encoded_jwt, expire.isoformat())
+    except Exception as e:
+        print(f"Session creation error: {e}")
+    
     return encoded_jwt
 
 def verify_token(token: str):
-    """Verify JWT token"""
+    """Verify JWT token and check database session"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        # Check if session exists in database
+        session = db.get_session(token)
+        if not session:
+            return None
+        
+        # Check if session expired
+        expires_at = datetime.fromisoformat(session['expires_at'])
+        if datetime.utcnow() > expires_at:
+            db.delete_session(token)
+            return None
+        
         return payload
     except jwt.ExpiredSignatureError:
         return None
@@ -113,13 +138,20 @@ async def auth_login(request: Request):
         if not username or not password:
             raise HTTPException(status_code=400, detail="Username and password required")
         
-        # Validate user (replace with real password hashing in production)
-        user = USERS_DB.get(username)
+        # Get user from database
+        user = db.get_user_by_username(username)
         if not user:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        
+        # Validate password (use proper hashing in production)
+        if user["password"] != password:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
         # Create token
         token = create_access_token({"sub": username, "user_id": user["id"]})
+        
+        # Add to profile history
+        db.add_profile_history(user["id"], "login", {"timestamp": datetime.utcnow().isoformat()})
         
         return {
             "access_token": token,
@@ -137,9 +169,9 @@ async def auth_login(request: Request):
         raise HTTPException(status_code=500, detail="Login failed")
 
 @app.get("/auth/me")
-async def auth_me(request: Request):
+async def auth_me(request: Request, response: Response):
     """
-    Get current authenticated user
+    Get current authenticated user with caching
     Requires valid JWT token
     """
     try:
@@ -152,17 +184,39 @@ async def auth_me(request: Request):
         if not payload:
             raise HTTPException(status_code=401, detail="Invalid or expired token")
         
-        username = payload.get("sub")
-        user = USERS_DB.get(username)
+        user_id = payload.get("user_id")
+        
+        # Check cache first
+        cached = get_cached_data("profile", str(user_id))
+        if cached:
+            if check_etag(request, cached["etag"]):
+                return Response(status_code=304)
+            
+            add_cache_headers(response, cached["etag"], max_age=60)
+            return cached["data"]
+        
+        # Get from database
+        user = db.get_user_by_id(user_id)
         
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        return {
+        user_data = {
             "id": user["id"],
             "username": user["username"],
-            "email": user["email"]
+            "email": user["email"],
+            "bio": user.get("bio", ""),
+            "github_username": user.get("github_username", ""),
+            "leetcode_username": user.get("leetcode_username", ""),
+            "codeforces_handle": user.get("codeforces_handle", ""),
+            "last_updated": datetime.utcnow().isoformat()
         }
+        
+        # Cache the result
+        cache_entry = set_cached_data("profile", str(user_id), user_data)
+        add_cache_headers(response, cache_entry["etag"], max_age=60)
+        
+        return user_data
     except HTTPException:
         raise
     except Exception as e:
@@ -202,14 +256,22 @@ async def auth_oauth(request: Request):
 async def auth_logout(request: Request):
     """
     Logout endpoint
-    Invalidates user session (frontend should clear token)
+    Invalidates session in database
     """
     try:
         token = get_token_from_request(request)
         if not token:
             raise HTTPException(status_code=400, detail="No token provided")
         
-        # In production, add token to blacklist
+        # Get user info before deleting session
+        payload = verify_token(token)
+        if payload:
+            user_id = payload.get("user_id")
+            if user_id:
+                db.add_profile_history(user_id, "logout", {"timestamp": datetime.utcnow().isoformat()})
+        
+        # Delete session from database
+        db.delete_session(token)
         
         return {
             "status": "success",
@@ -224,8 +286,8 @@ async def auth_logout(request: Request):
 # ============ PROFILE ENDPOINTS ============
 
 @app.get("/profile")
-async def get_profile(request: Request):
-    """Get authenticated user's profile"""
+async def get_profile(request: Request, response: Response):
+    """Get authenticated user's profile with caching and history"""
     try:
         token = get_token_from_request(request)
         
@@ -236,19 +298,44 @@ async def get_profile(request: Request):
         if not payload:
             raise HTTPException(status_code=401, detail="Invalid token")
         
-        username = payload.get("sub")
-        user = USERS_DB.get(username)
+        user_id = payload.get("user_id")
+        
+        # Check cache first
+        cached = get_cached_data("profile", str(user_id))
+        if cached:
+            if check_etag(request, cached["etag"]):
+                return Response(status_code=304)
+            
+            add_cache_headers(response, cached["etag"], max_age=60)
+            return cached["data"]
+        
+        # Get from database
+        user = db.get_user_by_id(user_id)
         
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        return {
+        profile_data = {
             "id": user["id"],
             "username": user["username"],
             "email": user["email"],
-            "bio": "Developer",
-            "created_at": datetime.utcnow().isoformat()
+            "bio": user.get("bio", ""),
+            "github_username": user.get("github_username", ""),
+            "leetcode_username": user.get("leetcode_username", ""),
+            "codeforces_handle": user.get("codeforces_handle", ""),
+            "created_at": user["created_at"],
+            "updated_at": user["updated_at"],
+            "last_fetched": datetime.utcnow().isoformat()
         }
+        
+        # Save profile snapshot
+        db.save_user_profile(user_id, profile_data)
+        
+        # Cache the result
+        cache_entry = set_cached_data("profile", str(user_id), profile_data)
+        add_cache_headers(response, cache_entry["etag"], max_age=60)
+        
+        return profile_data
     except HTTPException:
         raise
     except Exception as e:
@@ -268,29 +355,116 @@ async def update_profile(request: Request):
         if not payload:
             raise HTTPException(status_code=401, detail="Invalid token")
         
-        username = payload.get("sub")
-        user = USERS_DB.get(username)
+        user_id = payload.get("user_id")
+        user = db.get_user_by_id(user_id)
         
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
         body = await request.json()
         
-        # Update user fields
+        # Update user in database
+        update_data = {}
         if "email" in body:
-            user["email"] = body["email"]
+            update_data["email"] = body["email"]
         if "bio" in body:
-            user["bio"] = body.get("bio", "")
+            update_data["bio"] = body.get("bio", "")
+        if "github_username" in body:
+            update_data["github_username"] = body.get("github_username", "")
+        if "leetcode_username" in body:
+            update_data["leetcode_username"] = body.get("leetcode_username", "")
+        if "codeforces_handle" in body:
+            update_data["codeforces_handle"] = body.get("codeforces_handle", "")
+        
+        success = db.update_user(user_id, **update_data)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update profile")
+        
+        # Add to profile history
+        db.add_profile_history(user_id, "profile_update", update_data)
+        
+        # Invalidate cache
+        invalidate_cache("profile", str(user_id))
+        
+        # Get updated user
+        updated_user = db.get_user_by_id(user_id)
         
         return {
             "message": "Profile updated",
-            "user": user
+            "user": {
+                "id": updated_user["id"],
+                "username": updated_user["username"],
+                "email": updated_user["email"],
+                "bio": updated_user.get("bio", ""),
+                "github_username": updated_user.get("github_username", ""),
+                "leetcode_username": updated_user.get("leetcode_username", ""),
+                "codeforces_handle": updated_user.get("codeforces_handle", "")
+            }
         }
     except HTTPException:
         raise
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to update profile")
+
+@app.get("/profile/history")
+async def get_profile_history_endpoint(request: Request, limit: int = 50):
+    """Get user's profile history"""
+    try:
+        token = get_token_from_request(request)
+        
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = payload.get("user_id")
+        
+        # Get profile history
+        history = db.get_profile_history(user_id, limit)
+        
+        return {
+            "status": "success",
+            "history": history,
+            "count": len(history)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to get profile history")
+
+@app.get("/profile/snapshots")
+async def get_profile_snapshots(request: Request, limit: int = 10):
+    """Get user's profile data snapshots over time"""
+    try:
+        token = get_token_from_request(request)
+        
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = payload.get("user_id")
+        
+        # Get profile snapshots
+        snapshots = db.get_user_profile_history(user_id, limit)
+        
+        return {
+            "status": "success",
+            "snapshots": snapshots,
+            "count": len(snapshots)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to get profile snapshots")
 
 # ============ DEVELOPER DATA ENDPOINTS ============
 
