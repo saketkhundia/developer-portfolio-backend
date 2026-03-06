@@ -1383,11 +1383,10 @@ async def cache_statistics(request: Request):
 
 @app.get("/accounts/connected")
 async def get_connected_accounts_endpoint(
-    access_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = None
+    request: Request
 ):
     """Get all connected accounts for the current user"""
-    token = extract_token(access_token, authorization)
+    token = get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
@@ -1425,12 +1424,10 @@ async def get_connected_accounts_endpoint(
 @app.post("/accounts/connect/{platform}")
 async def connect_account_endpoint(
     platform: str,
-    request: Request,
-    access_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = None
+    request: Request
 ):
     """Connect a platform account (GitHub, LeetCode, Codeforces)"""
-    token = extract_token(access_token, authorization)
+    token = get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
@@ -1479,11 +1476,10 @@ async def connect_account_endpoint(
 @app.delete("/accounts/disconnect/{platform}")
 async def disconnect_account_endpoint(
     platform: str,
-    access_token: Optional[str] = Cookie(None),
-    authorization: Optional[str] = None
+    request: Request
 ):
     """Disconnect a platform account"""
-    token = extract_token(access_token, authorization)
+    token = get_token_from_request(request)
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
     
