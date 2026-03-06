@@ -9,16 +9,61 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import jwt
 
+import database as db
+
+
+def _missing_feature(name: str, err: Exception):
+    def _raiser(*args, **kwargs):
+        raise RuntimeError(f"{name} unavailable: {err}")
+    return _raiser
+
+
+try:
+    from cache import get_cached_data, set_cached_data, invalidate_cache, get_cache_stats
+except ImportError as e:
+    print(f"IMPORT ERROR (cache): {e}")
+
+    def get_cached_data(*args, **kwargs):
+        return None
+
+    def set_cached_data(_prefix, _key, data):
+        return {"etag": "", "data": data}
+
+    def invalidate_cache(*args, **kwargs):
+        return False
+
+    def get_cache_stats():
+        return {"enabled": False, "reason": "cache dependency missing"}
+
 try:
     from github import fetch_github_data
-    from analytics import calculate_skill_score
-    from leetcode import fetch_leetcode_data
-    from codeforces import fetch_codeforces_data
-    from contributions import fetch_contributions
-    from cache import get_cached_data, set_cached_data, invalidate_cache, get_cache_stats
-    import database as db
 except ImportError as e:
-    print(f"IMPORT ERROR: {e}")
+    print(f"IMPORT ERROR (github): {e}")
+    fetch_github_data = _missing_feature("github", e)
+
+try:
+    from analytics import calculate_skill_score
+except ImportError as e:
+    print(f"IMPORT ERROR (analytics): {e}")
+    calculate_skill_score = _missing_feature("analytics", e)
+
+try:
+    from leetcode import fetch_leetcode_data
+except ImportError as e:
+    print(f"IMPORT ERROR (leetcode): {e}")
+    fetch_leetcode_data = _missing_feature("leetcode", e)
+
+try:
+    from codeforces import fetch_codeforces_data
+except ImportError as e:
+    print(f"IMPORT ERROR (codeforces): {e}")
+    fetch_codeforces_data = _missing_feature("codeforces", e)
+
+try:
+    from contributions import fetch_contributions
+except ImportError as e:
+    print(f"IMPORT ERROR (contributions): {e}")
+    fetch_contributions = _missing_feature("contributions", e)
 
 app = FastAPI()
 
@@ -144,6 +189,22 @@ def get_device_info(request: Request) -> dict:
         "user_agent": user_agent[:200]  # Truncate to avoid too long strings
     }
 
+def _make_username_seed(value: str, fallback: str = "user") -> str:
+    seed = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in (value or fallback)).strip("_")
+    return seed or fallback
+
+def _ensure_unique_username(base_seed: str) -> str:
+    candidate = _make_username_seed(base_seed)
+    if not db.get_user_by_username(candidate):
+        return candidate
+
+    for i in range(1, 1000):
+        next_candidate = f"{candidate}_{i}"
+        if not db.get_user_by_username(next_candidate):
+            return next_candidate
+
+    return f"{candidate}_{int(datetime.utcnow().timestamp())}"
+
 # ============ ENDPOINTS ============
 
 @app.get("/")
@@ -157,23 +218,116 @@ async def home():
 
 # ============ AUTH ENDPOINTS ============
 
+@app.post("/auth/signup")
+async def auth_signup(request: Request, response: Response):
+    """Signup endpoint - accepts name/email/password and creates a user session"""
+    try:
+        body = await request.json()
+        name = (body.get("name") or "").strip()
+        email = (body.get("email") or "").strip().lower()
+        password = body.get("password") or ""
+        remember_me = body.get("remember_me", False)
+        profile_picture_url = (
+            body.get("profile_picture_url") or
+            body.get("avatar") or
+            body.get("picture") or
+            body.get("photo") or
+            body.get("avatar_url") or
+            ""
+        )
+
+        if not email or "@" not in email:
+            raise HTTPException(status_code=400, detail="Valid email is required")
+        if not password:
+            raise HTTPException(status_code=400, detail="Password is required")
+
+        existing = db.get_user_by_email(email)
+        if existing:
+            raise HTTPException(status_code=409, detail="Email already exists")
+
+        base_seed = name or email.split("@")[0]
+        unique_username = _ensure_unique_username(base_seed)
+        user_id = db.create_user(unique_username, email, password)
+        if not user_id:
+            raise HTTPException(status_code=500, detail="Failed to create user")
+
+        if profile_picture_url:
+            db.update_user(user_id, profile_picture_url=profile_picture_url)
+
+        user = db.get_user_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=500, detail="Failed to load created user")
+
+        device_info = get_device_info(request)
+        expiry = timedelta(days=30) if remember_me else None
+        token = create_access_token(
+            {"sub": user["username"], "user_id": user["id"], "provider": "email"},
+            expires_delta=expiry,
+            device_info=device_info
+        )
+
+        db.add_profile_history(user["id"], "signup", {
+            "timestamp": datetime.utcnow().isoformat(),
+            "device": device_info["device_name"],
+            "ip": device_info["ip_address"]
+        })
+
+        response.set_cookie(
+            key="access_token",
+            value=token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=2592000 if remember_me else 86400,
+            path="/"
+        )
+
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_in": 2592000 if remember_me else 86400,
+            "user": {
+                "id": user["id"],
+                "username": user["username"],
+                "name": user["username"],
+                "email": user["email"],
+                "profile_picture_url": user.get("profile_picture_url", ""),
+                "avatar": user.get("profile_picture_url", "")
+            },
+            "device": device_info["device_name"]
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Signup failed")
+
 @app.post("/auth/login")
-async def auth_login(request: Request):
+async def auth_login(request: Request, response: Response):
     """
     Login endpoint - accepts username and password
     Returns access token and tracks device
     """
     try:
         body = await request.json()
-        username = body.get("username")
+        username = (body.get("username") or "").strip()
+        email = (body.get("email") or "").strip().lower()
         password = body.get("password")
         remember_me = body.get("remember_me", False)
+        identifier = username or email
         
-        if not username or not password:
-            raise HTTPException(status_code=400, detail="Username and password required")
+        if not identifier or not password:
+            raise HTTPException(status_code=400, detail="Username/email and password required")
         
         # Get user from database
-        user = db.get_user_by_username(username)
+        user = None
+        if username:
+            user = db.get_user_by_username(username)
+        if not user and email:
+            user = db.get_user_by_email(email)
+        if not user and "@" in identifier:
+            user = db.get_user_by_email(identifier.lower())
+
         if not user:
             raise HTTPException(status_code=401, detail="Invalid credentials")
         
@@ -187,7 +341,7 @@ async def auth_login(request: Request):
         # Create token with longer expiry if remember_me
         expiry = timedelta(days=30) if remember_me else None
         token = create_access_token(
-            {"sub": username, "user_id": user["id"]},
+            {"sub": user["username"], "user_id": user["id"], "provider": "email"},
             expires_delta=expiry,
             device_info=device_info
         )
@@ -199,6 +353,16 @@ async def auth_login(request: Request):
             "ip": device_info["ip_address"]
         })
         
+        response.set_cookie(
+            key="access_token",
+            value=token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=2592000 if remember_me else 86400,
+            path="/"
+        )
+
         return {
             "access_token": token,
             "token_type": "bearer",
@@ -206,7 +370,10 @@ async def auth_login(request: Request):
             "user": {
                 "id": user["id"],
                 "username": user["username"],
-                "email": user["email"]
+                "name": user["username"],
+                "email": user["email"],
+                "profile_picture_url": user.get("profile_picture_url", ""),
+                "avatar": user.get("profile_picture_url", "")
             },
             "device": device_info["device_name"]
         }
@@ -252,11 +419,14 @@ async def auth_me(request: Request, response: Response):
         user_data = {
             "id": user["id"],
             "username": user["username"],
+            "name": user["username"],
             "email": user["email"],
             "bio": user.get("bio", ""),
             "github_username": user.get("github_username", ""),
             "leetcode_username": user.get("leetcode_username", ""),
             "codeforces_handle": user.get("codeforces_handle", ""),
+            "profile_picture_url": user.get("profile_picture_url", ""),
+            "avatar": user.get("profile_picture_url", ""),
             "last_updated": datetime.utcnow().isoformat()
         }
         
@@ -272,27 +442,100 @@ async def auth_me(request: Request, response: Response):
         raise HTTPException(status_code=500, detail="Failed to get user info")
 
 @app.post("/auth/oauth")
-async def auth_oauth(request: Request):
+async def auth_oauth(request: Request, response: Response):
     """
     OAuth callback endpoint
     Handles OAuth provider responses
     """
     try:
         body = await request.json()
-        provider = body.get("provider")  # github, google, etc.
+        print(f"[DEBUG] OAuth body received: {body}")
+        
+        provider = body.get("provider") or "google"  # default for gmail/google login
         code = body.get("code")
+        access_token = body.get("access_token")
+        id_token = body.get("id_token")
+        oauth_token = body.get("token")
+        user_obj = body.get("user") or body.get("profile") or body.get("result") or {}
+        username = body.get("username") or user_obj.get("username") or user_obj.get("name")
+        email = body.get("email") or user_obj.get("email")
         
-        if not provider or not code:
-            raise HTTPException(status_code=400, detail="Provider and code required")
+        print(f"[DEBUG] user_obj: {user_obj}")
+
+        oauth_credential = code or access_token or id_token or oauth_token
+        if not oauth_credential and not username and not email:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide one of: code, access_token, id_token, token, username, or email"
+            )
+
+        # Placeholder OAuth user mapping (until provider verification is implemented)
+        base_username = username or (email.split("@")[0] if email else None) or f"{provider}_user"
+        safe_username = _make_username_seed(base_username, f"{provider}_user")
+
+        user_email = (email or f"{safe_username}@{provider}.oauth.local").strip().lower()
+
+        user = db.get_user_by_email(user_email)
+        # Avoid linking to a different account via username when we already have an email identity.
+        if not user and not email:
+            user = db.get_user_by_username(safe_username)
+        profile_picture_url = (body.get("profile_picture_url") or 
+                              user_obj.get("picture") or 
+                              user_obj.get("profile_picture_url") or
+                              user_obj.get("photoURL") or
+                              user_obj.get("photo") or
+                              user_obj.get("avatar_url") or
+                              user_obj.get("image_url") or
+                              "")
         
-        # TODO: Implement OAuth logic for different providers
-        # For now, return placeholder
-        token = create_access_token({"sub": "oauth_user", "provider": provider})
+        print(f"[DEBUG] Extracted profile_picture_url: {profile_picture_url}")
         
+        if not user:
+            unique_username = _ensure_unique_username(safe_username)
+            user_id = db.create_user(unique_username, user_email, "oauth_user")
+            if not user_id:
+                raise HTTPException(status_code=500, detail="Failed to create OAuth user")
+            user = db.get_user_by_id(user_id)
+        
+        # Update profile picture if provided from Google/OAuth
+        if profile_picture_url:
+            db.update_user(user["id"], profile_picture_url=profile_picture_url)
+            user = db.get_user_by_id(user["id"])
+
+        device_info = get_device_info(request)
+        token = create_access_token(
+            {"sub": user["username"], "user_id": user["id"], "provider": provider},
+            device_info=device_info
+        )
+
+        db.add_profile_history(user["id"], "oauth_login", {
+            "provider": provider,
+            "timestamp": datetime.utcnow().isoformat(),
+            "device": device_info["device_name"]
+        })
+
+        response.set_cookie(
+            key="access_token",
+            value=token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=86400,
+            path="/"
+        )
+
         return {
             "access_token": token,
             "token_type": "bearer",
-            "provider": provider
+            "provider": provider,
+            "user": {
+                "id": user["id"],
+                "username": user["username"],
+                "name": user["username"],
+                "email": user["email"],
+                "profile_picture_url": user.get("profile_picture_url", ""),
+                "avatar": user.get("profile_picture_url", "")
+            }
         }
     except HTTPException:
         raise
@@ -300,8 +543,103 @@ async def auth_oauth(request: Request):
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="OAuth failed")
 
+@app.post("/auth/gmail/login")
+async def auth_gmail_login(request: Request, response: Response):
+    """
+    Gmail-based cloud sync login.
+    Accepts email (+ optional name) and returns a profile bound to that email across devices.
+    """
+    try:
+        body = await request.json()
+        print(f"[DEBUG] Gmail login body received: {body}")
+        
+        email = (body.get("email") or "").strip().lower()
+        name = (body.get("name") or "").strip()
+        remember_me = body.get("remember_me", True)
+
+        if not email:
+            raise HTTPException(status_code=400, detail="email is required")
+        if "@" not in email:
+            raise HTTPException(status_code=400, detail="Invalid email")
+
+        # Keep it Gmail-focused as requested
+        if not email.endswith("@gmail.com"):
+            raise HTTPException(status_code=400, detail="Use a Gmail address")
+
+        existing = db.get_user_by_email(email)
+        profile_picture_url = (body.get("profile_picture_url") or 
+                              body.get("picture") or
+                              body.get("photoURL") or
+                              body.get("photo") or
+                              body.get("avatar_url") or
+                              body.get("image_url") or
+                              "")
+        
+        print(f"[DEBUG] Gmail extracted profile_picture_url: {profile_picture_url}")
+
+        
+        if existing:
+            user = existing
+            if profile_picture_url:
+                db.update_user(user["id"], profile_picture_url=profile_picture_url)
+                user = db.get_user_by_id(user["id"])
+        else:
+            base_seed = name or email.split("@")[0]
+            unique_username = _ensure_unique_username(base_seed)
+            user_id = db.create_user(unique_username, email, "gmail_user")
+            if not user_id:
+                raise HTTPException(status_code=500, detail="Failed to create Gmail user")
+            user = db.get_user_by_id(user_id)
+            if profile_picture_url:
+                db.update_user(user["id"], profile_picture_url=profile_picture_url)
+                user = db.get_user_by_id(user["id"])
+
+        device_info = get_device_info(request)
+        expiry = timedelta(days=30) if remember_me else timedelta(hours=TOKEN_EXPIRY_HOURS)
+        token = create_access_token(
+            {"sub": user["username"], "user_id": user["id"], "provider": "gmail"},
+            expires_delta=expiry,
+            device_info=device_info
+        )
+
+        db.add_profile_history(user["id"], "gmail_login", {
+            "timestamp": datetime.utcnow().isoformat(),
+            "device": device_info["device_name"],
+            "email": email
+        })
+
+        response.set_cookie(
+            key="access_token",
+            value=token,
+            httponly=True,
+            samesite="lax",
+            secure=False,
+            max_age=2592000 if remember_me else 86400,
+            path="/"
+        )
+
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "provider": "gmail",
+            "expires_in": 2592000 if remember_me else 86400,
+            "user": {
+                "id": user["id"],
+                "username": user["username"],
+                "name": user["username"],
+                "email": user["email"],
+                "profile_picture_url": user.get("profile_picture_url", ""),
+                "avatar": user.get("profile_picture_url", "")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Gmail login failed")
+
 @app.post("/auth/logout")
-async def auth_logout(request: Request):
+async def auth_logout(request: Request, response: Response):
     """
     Logout endpoint
     Invalidates session in database
@@ -321,6 +659,8 @@ async def auth_logout(request: Request):
         # Delete session from database
         db.delete_session(token)
         
+        response.delete_cookie(key="access_token", path="/")
+
         return {
             "status": "success",
             "message": "Logged out successfully"
@@ -436,6 +776,7 @@ async def get_profile(request: Request, response: Response):
             "github_username": user.get("github_username", ""),
             "leetcode_username": user.get("leetcode_username", ""),
             "codeforces_handle": user.get("codeforces_handle", ""),
+            "profile_picture_url": user.get("profile_picture_url", ""),
             "created_at": user["created_at"],
             "updated_at": user["updated_at"],
             "last_fetched": datetime.utcnow().isoformat()
@@ -454,6 +795,75 @@ async def get_profile(request: Request, response: Response):
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to get profile")
+
+@app.post("/sync/profile")
+async def sync_profile(request: Request, response: Response):
+    """Sync profile data to cloud (same as PUT /profile)"""
+    try:
+        token = get_token_from_request(request)
+        
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = payload.get("user_id")
+        user = db.get_user_by_id(user_id)
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        body = await request.json()
+        
+        # Update user in database
+        update_data = {}
+        if "email" in body:
+            update_data["email"] = body["email"]
+        if "bio" in body:
+            update_data["bio"] = body.get("bio", "")
+        if "github_username" in body:
+            update_data["github_username"] = body.get("github_username", "")
+        if "leetcode_username" in body:
+            update_data["leetcode_username"] = body.get("leetcode_username", "")
+        if "codeforces_handle" in body:
+            update_data["codeforces_handle"] = body.get("codeforces_handle", "")
+        if "profile_picture_url" in body:
+            update_data["profile_picture_url"] = body.get("profile_picture_url", "")
+        
+        success = db.update_user(user_id, **update_data)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to sync profile")
+        
+        # Add to profile history
+        db.add_profile_history(user_id, "profile_sync", update_data)
+        
+        # Invalidate cache
+        invalidate_cache("profile", str(user_id))
+        
+        # Get updated user
+        updated_user = db.get_user_by_id(user_id)
+        
+        return {
+            "message": "Profile synced to cloud",
+            "user": {
+                "id": updated_user["id"],
+                "username": updated_user["username"],
+                "email": updated_user["email"],
+                "bio": updated_user.get("bio", ""),
+                "github_username": updated_user.get("github_username", ""),
+                "leetcode_username": updated_user.get("leetcode_username", ""),
+                "codeforces_handle": updated_user.get("codeforces_handle", ""),
+                "profile_picture_url": updated_user.get("profile_picture_url", "")
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to sync profile")
 
 @app.put("/profile")
 async def update_profile(request: Request):
@@ -488,6 +898,8 @@ async def update_profile(request: Request):
             update_data["leetcode_username"] = body.get("leetcode_username", "")
         if "codeforces_handle" in body:
             update_data["codeforces_handle"] = body.get("codeforces_handle", "")
+        if "profile_picture_url" in body:
+            update_data["profile_picture_url"] = body.get("profile_picture_url", "")
         
         success = db.update_user(user_id, **update_data)
         
@@ -512,7 +924,8 @@ async def update_profile(request: Request):
                 "bio": updated_user.get("bio", ""),
                 "github_username": updated_user.get("github_username", ""),
                 "leetcode_username": updated_user.get("leetcode_username", ""),
-                "codeforces_handle": updated_user.get("codeforces_handle", "")
+                "codeforces_handle": updated_user.get("codeforces_handle", ""),
+                "profile_picture_url": updated_user.get("profile_picture_url", "")
             }
         }
     except HTTPException:
@@ -549,6 +962,87 @@ async def get_profile_history_endpoint(request: Request, limit: int = 50):
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to get profile history")
+
+@app.get("/public/profile/{username}")
+async def get_public_profile(username: str, response: Response):
+    """Get public profile for a user (no auth required)"""
+    try:
+        user = db.get_user_by_username(username)
+        
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check cache first
+        cached = get_cached_data("public_profile", username)
+        if cached:
+            add_cache_headers(response, cached["etag"], max_age=300)
+            return cached["data"]
+        
+        profile_data = {
+            "id": user["id"],
+            "username": user["username"],
+            "email": user["email"],
+            "bio": user.get("bio", ""),
+            "github_username": user.get("github_username", ""),
+            "leetcode_username": user.get("leetcode_username", ""),
+            "codeforces_handle": user.get("codeforces_handle", ""),
+            "profile_picture_url": user.get("profile_picture_url", ""),
+            "created_at": user["created_at"],
+            "updated_at": user["updated_at"]
+        }
+        
+        # Cache the result
+        cache_entry = set_cached_data("public_profile", username, profile_data)
+        add_cache_headers(response, cache_entry["etag"], max_age=300)
+        
+        return profile_data
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to get public profile")
+
+@app.post("/profile/picture")
+async def upload_profile_picture(request: Request):
+    """Upload user's profile picture URL"""
+    try:
+        token = get_token_from_request(request)
+        
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        user_id = payload.get("user_id")
+        
+        body = await request.json()
+        picture_url = body.get("picture_url", "")
+        
+        if not picture_url:
+            raise HTTPException(status_code=400, detail="picture_url is required")
+        
+        # Update user's profile picture URL
+        success = db.update_user(user_id, profile_picture_url=picture_url)
+        
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to update profile picture")
+        
+        # Invalidate cache
+        user = db.get_user_by_id(user_id)
+        invalidate_cache("public_profile", user["username"])
+        invalidate_cache("profile", str(user_id))
+        
+        return {
+            "message": "Profile picture updated",
+            "picture_url": picture_url
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to upload profile picture")
 
 @app.get("/profile/snapshots")
 async def get_profile_snapshots(request: Request, limit: int = 10):
@@ -711,7 +1205,6 @@ async def contributions(username: str, request: Request, response: Response):
             return cached["data"]
         
         # Fetch fresh data
-        from contributions import fetch_contributions
         data = await fetch_contributions(username)
         
         if data.get("error"):

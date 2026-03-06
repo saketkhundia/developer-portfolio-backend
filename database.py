@@ -41,6 +41,7 @@ def init_db():
                 github_username TEXT,
                 leetcode_username TEXT,
                 codeforces_handle TEXT,
+                profile_picture_url TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -129,6 +130,17 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
             return dict(row)
         return None
 
+def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
+    """Get user by email"""
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
+        row = cursor.fetchone()
+
+        if row:
+            return dict(row)
+        return None
+
 def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
     """Get user by ID"""
     with get_db() as conn:
@@ -151,7 +163,7 @@ def update_user(user_id: int, **kwargs) -> bool:
             fields = []
             values = []
             
-            for key in ['email', 'bio', 'github_username', 'leetcode_username', 'codeforces_handle']:
+            for key in ['email', 'bio', 'github_username', 'leetcode_username', 'codeforces_handle', 'profile_picture_url']:
                 if key in kwargs:
                     fields.append(f"{key} = ?")
                     values.append(kwargs[key])
