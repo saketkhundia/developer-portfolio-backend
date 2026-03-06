@@ -4,7 +4,7 @@ import traceback
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Cookie
+from fastapi import FastAPI, HTTPException, Request, Cookie, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import jwt
@@ -15,6 +15,7 @@ try:
     from leetcode import fetch_leetcode_data
     from codeforces import fetch_codeforces_data
     from contributions import fetch_contributions
+    from cache import get_cached_data, set_cached_data, invalidate_cache, get_cache_stats
 except ImportError as e:
     print(f"IMPORT ERROR: {e}")
 
@@ -73,6 +74,17 @@ def get_token_from_request(request: Request) -> Optional[str]:
     # Try cookies
     token = request.cookies.get("access_token")
     return token
+
+def check_etag(request: Request, cached_etag: str) -> bool:
+    """Check if client's ETag matches current data"""
+    client_etag = request.headers.get("If-None-Match")
+    return client_etag == cached_etag
+
+def add_cache_headers(response: Response, etag: str, max_age: int = 300):
+    """Add caching headers to response"""
+    response.headers["ETag"] = etag
+    response.headers["Cache-Control"] = f"public, max-age={max_age}, must-revalidate"
+    response.headers["Last-Modified"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
 # ============ ENDPOINTS ============
 
@@ -283,24 +295,57 @@ async def update_profile(request: Request):
 # ============ DEVELOPER DATA ENDPOINTS ============
 
 @app.get("/analyze/{username}")
-async def analyze(username: str):
-    """Analyze developer's GitHub data"""
+async def analyze(username: str, request: Request, response: Response):
+    """Analyze developer's GitHub data with caching"""
     try:
+        # Check cache first
+        cached = get_cached_data("github", username)
+        
+        if cached:
+            # Check if client has current version
+            if check_etag(request, cached["etag"]):
+                response.status_code = 304
+                return Response(status_code=304)
+            
+            # Return cached data with headers
+            add_cache_headers(response, cached["etag"], max_age=300)
+            return cached["data"]
+        
+        # Fetch fresh data
         repos = fetch_github_data(username)
         analytics = calculate_skill_score(repos)
-        return {
+        result = {
             "username": username,
             "analytics": analytics,
-            "repositories": repos
+            "repositories": repos,
+            "last_updated": datetime.utcnow().isoformat()
         }
+        
+        # Cache the result
+        cache_entry = set_cached_data("github", username, result)
+        add_cache_headers(response, cache_entry["etag"], max_age=300)
+        
+        return result
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/leetcode/{username}")
-async def leetcode(username: str):
-    """Get LeetCode stats"""
+async def leetcode(username: str, request: Request, response: Response):
+    """Get LeetCode stats with caching"""
     try:
+        # Check cache first
+        cached = get_cached_data("leetcode", username)
+        
+        if cached:
+            if check_etag(request, cached["etag"]):
+                response.status_code = 304
+                return Response(status_code=304)
+            
+            add_cache_headers(response, cached["etag"], max_age=600)
+            return cached["data"]
+        
+        # Fetch fresh data
         import inspect
         if inspect.iscoroutinefunction(fetch_leetcode_data):
             data = await fetch_leetcode_data(username)
@@ -310,6 +355,13 @@ async def leetcode(username: str):
         if isinstance(data, dict) and data.get("error"):
             raise HTTPException(status_code=404, detail=data.get("error"))
         
+        # Add timestamp
+        data["last_updated"] = datetime.utcnow().isoformat()
+        
+        # Cache the result
+        cache_entry = set_cached_data("leetcode", username, data)
+        add_cache_headers(response, cache_entry["etag"], max_age=600)
+        
         return data
     except HTTPException:
         raise
@@ -318,9 +370,21 @@ async def leetcode(username: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/codeforces/{handle}")
-async def codeforces(handle: str):
-    """Get CodeForces stats"""
+async def codeforces(handle: str, request: Request, response: Response):
+    """Get CodeForces stats with caching"""
     try:
+        # Check cache first
+        cached = get_cached_data("codeforces", handle)
+        
+        if cached:
+            if check_etag(request, cached["etag"]):
+                response.status_code = 304
+                return Response(status_code=304)
+            
+            add_cache_headers(response, cached["etag"], max_age=600)
+            return cached["data"]
+        
+        # Fetch fresh data
         import inspect
         if inspect.iscoroutinefunction(fetch_codeforces_data):
             data = await fetch_codeforces_data(handle)
@@ -330,6 +394,13 @@ async def codeforces(handle: str):
         if isinstance(data, dict) and data.get("error"):
             raise HTTPException(status_code=404, detail=data.get("error"))
         
+        # Add timestamp
+        data["last_updated"] = datetime.utcnow().isoformat()
+        
+        # Cache the result
+        cache_entry = set_cached_data("codeforces", handle, data)
+        add_cache_headers(response, cache_entry["etag"], max_age=600)
+        
         return data
     except HTTPException:
         raise
@@ -338,19 +409,72 @@ async def codeforces(handle: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/contributions/{username}")
-async def contributions(username: str):
-    """Get GitHub contributions"""
+async def contributions(username: str, request: Request, response: Response):
+    """Get GitHub contributions with caching"""
     try:
-        import inspect
+        # Check cache first
+        cached = get_cached_data("contributions", username)
+        
+        if cached:
+            if check_etag(request, cached["etag"]):
+                response.status_code = 304
+                return Response(status_code=304)
+            
+            add_cache_headers(response, cached["etag"], max_age=300)
+            return cached["data"]
+        
+        # Fetch fresh data
         from contributions import fetch_contributions
         data = await fetch_contributions(username)
         
         if data.get("error"):
             raise HTTPException(status_code=404, detail=data.get("error"))
         
+        # Add timestamp
+        data["last_updated"] = datetime.utcnow().isoformat()
+        
+        # Cache the result
+        cache_entry = set_cached_data("contributions", username, data)
+        add_cache_headers(response, cache_entry["etag"], max_age=300)
+        
         return data
     except HTTPException:
         raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============ CACHE MANAGEMENT ENDPOINTS ============
+
+@app.post("/cache/invalidate/{prefix}/{identifier}")
+async def invalidate_user_cache(prefix: str, identifier: str, request: Request):
+    """Invalidate specific cached data (requires auth)"""
+    try:
+        token = get_token_from_request(request)
+        if not token or not verify_token(token):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        
+        success = invalidate_cache(prefix, identifier)
+        return {
+            "status": "success" if success else "not_found",
+            "message": f"Cache invalidated for {prefix}:{identifier}" if success else "Cache entry not found"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/cache/stats")
+async def cache_statistics(request: Request):
+    """Get cache statistics"""
+    try:
+        stats = get_cache_stats()
+        return {
+            "status": "success",
+            "cache": stats,
+            "timestamp": datetime.utcnow().isoformat()
+        }
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
