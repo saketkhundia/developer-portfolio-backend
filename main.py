@@ -117,22 +117,34 @@ def verify_token(token: str):
     """Verify JWT token and check database session"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print(f"[TOKEN] JWT decoded successfully, user_id: {payload.get('user_id')}")
         
         # Check if session exists and is active in database
         session = db.get_session(token)
-        if not session or session.get('is_active') == 0:
+        if not session:
+            print(f"[TOKEN] Session not found in database")
+            return None
+        if session.get('is_active') == 0:
+            print(f"[TOKEN] Session is inactive")
             return None
         
         # Check if session expired
         expires_at = datetime.fromisoformat(session['expires_at'])
         if datetime.utcnow() > expires_at:
+            print(f"[TOKEN] Session expired at {expires_at}")
             db.delete_session(token)
             return None
         
+        print(f"[TOKEN] ✓ Valid token for user {payload.get('user_id')}")
         return payload
     except jwt.ExpiredSignatureError:
+        print(f"[TOKEN] JWT signature expired")
         return None
-    except jwt.InvalidTokenError:
+    except jwt.InvalidTokenError as e:
+        print(f"[TOKEN] Invalid JWT: {e}")
+        return None
+    except Exception as e:
+        print(f"[TOKEN] Verification error: {e}")
         return None
 
 def get_token_from_request(request: Request) -> Optional[str]:
