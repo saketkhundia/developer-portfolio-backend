@@ -852,7 +852,8 @@ async def get_profile(request: Request, response: Response):
         cache_entry = set_cached_data("profile", str(user_id), profile_data)
         add_cache_headers(response, cache_entry["etag"], max_age=60)
         
-        return profile_data
+        # Use JSONResponse to ensure proper serialization
+        return JSONResponse(content=profile_data)
     except HTTPException:
         raise
     except Exception as e:
