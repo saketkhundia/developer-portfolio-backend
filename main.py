@@ -509,13 +509,17 @@ async def auth_oauth(request: Request, response: Response):
                             "client_id": GITHUB_CLIENT_ID,
                             "client_secret": GITHUB_CLIENT_SECRET,
                             "code": code,
+                            "redirect_uri": redirect_uri or "",
                         }
                     )
                     token_data = token_resp.json()
+                    print(f"[DEBUG] GitHub token exchange response: {token_data}")
                     access_token = token_data.get("access_token")
                     
                     if not access_token:
-                        raise HTTPException(status_code=400, detail="Failed to get GitHub access token")
+                        error_desc = token_data.get("error_description", token_data.get("error", "Unknown error"))
+                        print(f"[ERROR] GitHub token exchange failed: {error_desc}")
+                        raise HTTPException(status_code=400, detail=f"Failed to get GitHub access token: {error_desc}")
                     
                     # Fetch user info
                     user_resp = await client.get(
