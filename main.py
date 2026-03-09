@@ -444,7 +444,6 @@ async def auth_me(request: Request, response: Response):
         user_data = {
             "id": user["id"],
             "username": user["username"],
-            "name": user["username"],
             "email": user["email"],
             "bio": user.get("bio", ""),
             "github_username": user.get("github_username", ""),
@@ -454,6 +453,19 @@ async def auth_me(request: Request, response: Response):
             "avatar": user.get("profile_picture_url", ""),
             "last_updated": datetime.utcnow().isoformat()
         }
+        
+        # Include displayName from profile snapshot (the user's chosen name)
+        latest_profile = db.get_latest_user_profile(user_id)
+        if latest_profile:
+            stored = latest_profile.get('data', {})
+            display_name = stored.get('displayName', '')
+            if display_name:
+                user_data["name"] = display_name
+                user_data["displayName"] = display_name
+            else:
+                user_data["name"] = user["username"]
+        else:
+            user_data["name"] = user["username"]
         
         # Cache the result
         cache_entry = set_cached_data("profile", str(user_id), user_data)
