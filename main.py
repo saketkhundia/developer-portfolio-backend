@@ -88,6 +88,7 @@ GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 # Create default test user if not exists
 try:
@@ -1428,6 +1429,51 @@ async def contributions(username: str, request: Request, response: Response):
         add_cache_headers(response, cache_entry["etag"], max_age=300)
         
         return data
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/ai/insights")
+async def ai_insights(request: Request):
+    """Generate AI insights using Groq"""
+    try:
+        if not GROQ_API_KEY:
+            raise HTTPException(status_code=500, detail="AI service not configured")
+        
+        body = await request.json()
+        prompt = body.get("prompt", "")
+        
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt is required")
+        
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.7,
+                    "max_tokens": 1000
+                },
+                timeout=30.0
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(status_code=response.status_code, detail="AI service error")
+            
+            data = response.json()
+            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+            
+            return {
+                "result": content,
+                "model": "llama-3.3-70b-versatile"
+            }
     except HTTPException:
         raise
     except Exception as e:
