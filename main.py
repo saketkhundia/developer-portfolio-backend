@@ -70,7 +70,7 @@ app = FastAPI()
 # ============ CORS CONFIGURATION ============
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://deviq-bay.vercel.app", "http://localhost:3000"],
+    allow_origins=["https://deviq-bay.vercel.app", "http://localhost:3000", "https://deviq.online", "https://saket21s.github.io"],
     allow_origin_regex=r"https://.*\.vercel\.app|http://localhost(:\d+)?",
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
