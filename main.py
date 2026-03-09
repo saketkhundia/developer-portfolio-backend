@@ -3,6 +3,7 @@ import os
 import traceback
 from datetime import datetime, timedelta
 from typing import Optional
+import httpx
 
 from fastapi import FastAPI, HTTPException, Request, Cookie, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -83,6 +84,10 @@ app.add_middleware(
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
 ALGORITHM = "HS256"
 TOKEN_EXPIRY_HOURS = 24
+GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
 
 # Create default test user if not exists
 try:
@@ -464,50 +469,120 @@ async def auth_me(request: Request, response: Response):
 async def auth_oauth(request: Request, response: Response):
     """
     OAuth callback endpoint
-    Handles OAuth provider responses
+    Handles OAuth provider responses and exchanges authorization codes
     """
     try:
         body = await request.json()
         print(f"[DEBUG] OAuth body received: {body}")
         
-        provider = body.get("provider") or "google"  # default for gmail/google login
+        provider = body.get("provider") or "google"
         code = body.get("code")
-        access_token = body.get("access_token")
-        id_token = body.get("id_token")
-        oauth_token = body.get("token")
-        user_obj = body.get("user") or body.get("profile") or body.get("result") or {}
-        username = body.get("username") or user_obj.get("username") or user_obj.get("name")
-        email = body.get("email") or user_obj.get("email")
+        redirect_uri = body.get("redirect_uri")
         
-        print(f"[DEBUG] user_obj: {user_obj}")
+        # If code is provided, exchange it for user data
+        if code:
+            print(f"[DEBUG] Exchanging OAuth code for {provider}")
+            
+            if provider == "github":
+                if not GITHUB_CLIENT_ID or not GITHUB_CLIENT_SECRET:
+                    raise HTTPException(status_code=500, detail="GitHub OAuth not configured")
+                
+                async with httpx.AsyncClient() as client:
+                    # Exchange code for access token
+                    token_resp = await client.post(
+                        "https://github.com/login/oauth/access_token",
+                        headers={"Accept": "application/json"},
+                        data={
+                            "client_id": GITHUB_CLIENT_ID,
+                            "client_secret": GITHUB_CLIENT_SECRET,
+                            "code": code,
+                        }
+                    )
+                    token_data = token_resp.json()
+                    access_token = token_data.get("access_token")
+                    
+                    if not access_token:
+                        raise HTTPException(status_code=400, detail="Failed to get GitHub access token")
+                    
+                    # Fetch user info
+                    user_resp = await client.get(
+                        "https://api.github.com/user",
+                        headers={"Authorization": f"Bearer {access_token}"}
+                    )
+                    user_data = user_resp.json()
+                    
+                    username = user_data.get("login")
+                    email = user_data.get("email") or f"{username}@github.oauth"
+                    profile_picture_url = user_data.get("avatar_url", "")
+                    
+            elif provider == "google":
+                if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+                    raise HTTPException(status_code=500, detail="Google OAuth not configured")
+                
+                async with httpx.AsyncClient() as client:
+                    # Exchange code for tokens
+                    token_resp = await client.post(
+                        "https://oauth2.googleapis.com/token",
+                        data={
+                            "client_id": GOOGLE_CLIENT_ID,
+                            "client_secret": GOOGLE_CLIENT_SECRET,
+                            "code": code,
+                            "grant_type": "authorization_code",
+                            "redirect_uri": redirect_uri or "postmessage",
+                        }
+                    )
+                    token_data = token_resp.json()
+                    access_token = token_data.get("access_token")
+                    
+                    if not access_token:
+                        raise HTTPException(status_code=400, detail="Failed to get Google access token")
+                    
+                    # Fetch user info
+                    user_resp = await client.get(
+                        "https://www.googleapis.com/oauth2/v2/userinfo",
+                        headers={"Authorization": f"Bearer {access_token}"}
+                    )
+                    user_data = user_resp.json()
+                    
+                    username = user_data.get("name") or user_data.get("email", "").split("@")[0]
+                    email = user_data.get("email")
+                    profile_picture_url = user_data.get("picture", "")
+            else:
+                raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider}")
+        else:
+            # Fallback to old behavior if code not provided
+            access_token = body.get("access_token")
+            id_token = body.get("id_token")
+            oauth_token = body.get("token")
+            user_obj = body.get("user") or body.get("profile") or body.get("result") or {}
+            username = body.get("username") or user_obj.get("username") or user_obj.get("name")
+            email = body.get("email") or user_obj.get("email")
+            profile_picture_url = (body.get("profile_picture_url") or 
+                                  user_obj.get("picture") or 
+                                  user_obj.get("profile_picture_url") or
+                                  user_obj.get("photoURL") or
+                                  user_obj.get("photo") or
+                                  user_obj.get("avatar_url") or
+                                  user_obj.get("image_url") or
+                                  "")
+            
+            oauth_credential = access_token or id_token or oauth_token
+            if not oauth_credential and not username and not email:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Provide one of: code, access_token, id_token, token, username, or email"
+                )
+        
+        print(f"[DEBUG] OAuth user: {username}, {email}")
 
-        oauth_credential = code or access_token or id_token or oauth_token
-        if not oauth_credential and not username and not email:
-            raise HTTPException(
-                status_code=400,
-                detail="Provide one of: code, access_token, id_token, token, username, or email"
-            )
-
-        # Placeholder OAuth user mapping (until provider verification is implemented)
+        # Create or get user
         base_username = username or (email.split("@")[0] if email else None) or f"{provider}_user"
         safe_username = _make_username_seed(base_username, f"{provider}_user")
-
         user_email = (email or f"{safe_username}@{provider}.oauth.local").strip().lower()
 
         user = db.get_user_by_email(user_email)
-        # Avoid linking to a different account via username when we already have an email identity.
         if not user and not email:
             user = db.get_user_by_username(safe_username)
-        profile_picture_url = (body.get("profile_picture_url") or 
-                              user_obj.get("picture") or 
-                              user_obj.get("profile_picture_url") or
-                              user_obj.get("photoURL") or
-                              user_obj.get("photo") or
-                              user_obj.get("avatar_url") or
-                              user_obj.get("image_url") or
-                              "")
-        
-        print(f"[DEBUG] Extracted profile_picture_url: {profile_picture_url}")
         
         if not user:
             unique_username = _ensure_unique_username(safe_username)
@@ -516,7 +591,7 @@ async def auth_oauth(request: Request, response: Response):
                 raise HTTPException(status_code=500, detail="Failed to create OAuth user")
             user = db.get_user_by_id(user_id)
         
-        # Update profile picture if provided from Google/OAuth
+        # Update profile picture
         if profile_picture_url:
             db.update_user(user["id"], profile_picture_url=profile_picture_url)
             user = db.get_user_by_id(user["id"])
