@@ -879,7 +879,20 @@ async def get_profile(request: Request, response: Response):
             "profile_picture_url": user.get("profile_picture_url", ""),
             "created_at": user["created_at"],
             "updated_at": user["updated_at"],
-            "last_fetched": datetime.utcnow().isoformat()
+            "last_fetched": datetime.utcnow().isoformat(),
+            # Initialize default fields
+            "recentAnalyses": [],
+            "following": [],
+            "notifications": [],
+            "analysesRun": 0,
+            "displayName": "",
+            "website": "",
+            "location": "",
+            "joinedAt": "",
+            "avatar": user.get("profile_picture_url", ""),
+            "solvedProblems": [],
+            "weakCategories": [],
+            "lastPracticeProblem": None
         }
         
         # Get stored profile data (analysis history, following, etc.)
@@ -891,35 +904,24 @@ async def get_profile(request: Request, response: Response):
                   f"notifications={len(stored_data.get('notifications', []))}")
             print(f"[LOAD] Stored website: '{stored_data.get('website', 'NOT_FOUND')}', location: '{stored_data.get('location', 'NOT_FOUND')}'")
             print(f"[LOAD] All stored keys: {list(stored_data.keys())}")
-            # Merge stored profile data with current user data
-            if 'recentAnalyses' in stored_data:
-                profile_data['recentAnalyses'] = stored_data['recentAnalyses']
-            if 'following' in stored_data:
-                profile_data['following'] = stored_data['following']
-            if 'notifications' in stored_data:
-                profile_data['notifications'] = stored_data['notifications']
-            if 'analysesRun' in stored_data:
-                profile_data['analysesRun'] = stored_data['analysesRun']
-            if 'displayName' in stored_data:
-                profile_data['displayName'] = stored_data['displayName']
-            if 'website' in stored_data:
-                profile_data['website'] = stored_data['website']
-                print(f"[LOAD] Merged website into response: '{profile_data['website']}'")
-            if 'location' in stored_data:
-                profile_data['location'] = stored_data['location']
-                print(f"[LOAD] Merged location into response: '{profile_data['location']}'")
-            if 'joinedAt' in stored_data:
-                profile_data['joinedAt'] = stored_data['joinedAt']
-            if 'avatar' in stored_data:
-                profile_data['avatar'] = stored_data['avatar']
-            if 'solvedProblems' in stored_data:
-                profile_data['solvedProblems'] = stored_data['solvedProblems']
-            if 'weakCategories' in stored_data:
-                profile_data['weakCategories'] = stored_data['weakCategories']
-            if 'lastPracticeProblem' in stored_data:
-                profile_data['lastPracticeProblem'] = stored_data['lastPracticeProblem']
+            # Merge stored profile data with current user data (overwrite defaults)
+            profile_data.update({
+                'recentAnalyses': stored_data.get('recentAnalyses', []),
+                'following': stored_data.get('following', []),
+                'notifications': stored_data.get('notifications', []),
+                'analysesRun': stored_data.get('analysesRun', 0),
+                'displayName': stored_data.get('displayName', ''),
+                'website': stored_data.get('website', ''),
+                'location': stored_data.get('location', ''),
+                'joinedAt': stored_data.get('joinedAt', ''),
+                'avatar': stored_data.get('avatar', profile_data['avatar']),
+                'solvedProblems': stored_data.get('solvedProblems', []),
+                'weakCategories': stored_data.get('weakCategories', []),
+                'lastPracticeProblem': stored_data.get('lastPracticeProblem', None)
+            })
+            print(f"[LOAD] Merged website: '{profile_data['website']}', location: '{profile_data['location']}'")
         else:
-            print(f"[LOAD] No stored profile found for user {user_id}")
+            print(f"[LOAD] No stored profile found for user {user_id} - using defaults")
         
         print(f"[LOAD] Returning profile with {len(profile_data.get('recentAnalyses', []))} analyses")
         
