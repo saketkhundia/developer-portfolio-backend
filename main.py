@@ -1456,7 +1456,7 @@ async def ai_insights(request: Request):
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": "llama-3.1-8b-instant",
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.7,
                     "max_tokens": 1000
@@ -1465,7 +1465,9 @@ async def ai_insights(request: Request):
             )
             
             if response.status_code != 200:
-                raise HTTPException(status_code=response.status_code, detail="AI service error")
+                error_body = response.text
+                print(f"[AI] Groq error {response.status_code}: {error_body}")
+                raise HTTPException(status_code=502, detail=f"AI service error: {response.status_code}")
             
             data = response.json()
             content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
