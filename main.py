@@ -529,7 +529,32 @@ async def auth_oauth(request: Request, response: Response):
                     user_data = user_resp.json()
                     
                     username = user_data.get("login")
-                    email = user_data.get("email") or f"{username}@github.oauth"
+                    email = user_data.get("email")
+                    
+                    # If email is not public, fetch from /user/emails endpoint
+                    if not email:
+                        try:
+                            emails_resp = await client.get(
+                                "https://api.github.com/user/emails",
+                                headers={"Authorization": f"Bearer {access_token}"}
+                            )
+                            if emails_resp.status_code == 200:
+                                emails_data = emails_resp.json()
+                                # Prefer the primary verified email
+                                for e in emails_data:
+                                    if e.get("primary") and e.get("verified"):
+                                        email = e["email"]
+                                        break
+                                # Fallback to any verified email
+                                if not email:
+                                    for e in emails_data:
+                                        if e.get("verified"):
+                                            email = e["email"]
+                                            break
+                        except Exception as ex:
+                            print(f"[WARN] Could not fetch GitHub emails: {ex}")
+                    
+                    email = email or ""
                     profile_picture_url = user_data.get("avatar_url", "")
                     
             elif provider == "google":
