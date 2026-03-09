@@ -938,6 +938,28 @@ async def get_profile(request: Request, response: Response):
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to get profile")
 
+@app.get("/sync/check")
+async def sync_check(request: Request):
+    """Lightweight endpoint: returns last profile update timestamp for polling"""
+    try:
+        token = get_token_from_request(request)
+        if not token:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        payload = verify_token(token)
+        if not payload:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user_id = payload.get("user_id")
+        latest = db.get_latest_user_profile(user_id)
+        return {
+            "last_updated": latest["created_at"] if latest else None,
+            "user_id": user_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Failed to check sync")
+
 @app.post("/sync/profile")
 async def sync_profile(request: Request, response: Response):
     """Sync complete profile data to cloud including analysis results"""
