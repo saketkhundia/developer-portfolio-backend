@@ -1,3 +1,4 @@
+from leetcode import fetch_company_tagged_questions
 import asyncio
 import os
 import traceback
@@ -1714,6 +1715,230 @@ async def disconnect_account_endpoint(
     except Exception as e:
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============ LEETCODE COMPANY TAGS ============
+@app.post("/leetcode/company-problems/{company}")
+async def leetcode_company_problems_post(company: str, request: Request, response: Response):
+    """POST variant: Fetch LeetCode problems tagged with a specific company (same as GET)"""
+    # Reuse GET logic
+    return await leetcode_company_problems(company, request, response)
+
+@app.get("/leetcode/company-problems/{company}")
+async def leetcode_company_problems(company: str, request: Request, response: Response):
+    """Fetch LeetCode problems tagged with a specific company"""
+    try:
+        cache_key = f"company_{company.lower()}"
+        cached = get_cached_data("leetcode_company", cache_key)
+
+        if cached:
+            if check_etag(request, cached["etag"]):
+                return Response(status_code=304)
+            add_cache_headers(response, cached["etag"], max_age=3600)
+            return cached["data"]
+
+        slug = company.lower().strip().replace(" ", "-")
+        result = fetch_company_tagged_questions(slug)
+        if "error" in result or not result.get("problems"):
+            fallback = _get_company_fallback(slug)
+            if fallback:
+                cache_entry = set_cached_data("leetcode_company", cache_key, fallback)
+                add_cache_headers(response, cache_entry["etag"], max_age=3600)
+                return fallback
+            raise HTTPException(status_code=404, detail=f"No problems found for company '{company}'")
+        cache_entry = set_cached_data("leetcode_company", cache_key, result)
+        add_cache_headers(response, cache_entry["etag"], max_age=3600)
+        return result
+
+        # (Removed unreachable code: now handled by reusable function)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Fallback to curated data on any error
+        fallback = _get_company_fallback(company.lower().strip().replace(" ", "-"))
+        if fallback:
+            return fallback
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/leetcode/companies")
+async def leetcode_companies():
+    """Return list of supported companies with metadata"""
+    return {
+        "companies": [
+            {"name": "Google", "slug": "google", "icon": "G", "tier": "FAANG"},
+            {"name": "Amazon", "slug": "amazon", "icon": "A", "tier": "FAANG"},
+            {"name": "Meta", "slug": "facebook", "icon": "M", "tier": "FAANG"},
+            {"name": "Apple", "slug": "apple", "icon": "Ap", "tier": "FAANG"},
+            {"name": "Netflix", "slug": "netflix", "icon": "N", "tier": "FAANG"},
+            {"name": "Microsoft", "slug": "microsoft", "icon": "Ms", "tier": "FAANG"},
+            {"name": "Bloomberg", "slug": "bloomberg", "icon": "Bl", "tier": "Top"},
+            {"name": "Goldman Sachs", "slug": "goldman-sachs", "icon": "GS", "tier": "Top"},
+            {"name": "Uber", "slug": "uber", "icon": "Ub", "tier": "Top"},
+            {"name": "LinkedIn", "slug": "linkedin", "icon": "Li", "tier": "Top"},
+            {"name": "Adobe", "slug": "adobe", "icon": "Ad", "tier": "Top"},
+            {"name": "Oracle", "slug": "oracle", "icon": "Or", "tier": "Top"},
+            {"name": "Salesforce", "slug": "salesforce", "icon": "Sf", "tier": "Top"},
+            {"name": "Twitter", "slug": "twitter", "icon": "Tw", "tier": "Top"},
+            {"name": "Spotify", "slug": "spotify", "icon": "Sp", "tier": "Mid"},
+            {"name": "Stripe", "slug": "stripe", "icon": "St", "tier": "Mid"},
+            {"name": "Airbnb", "slug": "airbnb", "icon": "Ab", "tier": "Mid"},
+            {"name": "Snap", "slug": "snapchat", "icon": "Sn", "tier": "Mid"},
+            {"name": "TikTok", "slug": "tiktok", "icon": "Tk", "tier": "Mid"},
+            {"name": "Nvidia", "slug": "nvidia", "icon": "Nv", "tier": "Mid"},
+            {"name": "PayPal", "slug": "paypal", "icon": "Pp", "tier": "Mid"},
+            {"name": "Cisco", "slug": "cisco", "icon": "Cs", "tier": "Mid"},
+            {"name": "VMware", "slug": "vmware", "icon": "Vm", "tier": "Mid"},
+            {"name": "Walmart", "slug": "walmart", "icon": "Wm", "tier": "Mid"},
+            {"name": "JPMorgan", "slug": "jpmorgan", "icon": "JP", "tier": "Mid"},
+            {"name": "Samsung", "slug": "samsung", "icon": "Sm", "tier": "Mid"},
+            {"name": "Intuit", "slug": "intuit", "icon": "In", "tier": "Mid"},
+            {"name": "Yahoo", "slug": "yahoo", "icon": "Ya", "tier": "Mid"},
+        ]
+    }
+
+
+def _get_company_fallback(slug: str) -> dict | None:
+    """Return curated company problem sets for well-known companies."""
+    # Curated sets of the most well-known company-tagged problems
+    _DATA = {
+        "google": {
+            "company": "Google", "slug": "google",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 95, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "4", "title": "Median of Two Sorted Arrays", "slug": "median-of-two-sorted-arrays", "difficulty": "Hard", "topicTags": ["Array", "Binary Search", "Divide and Conquer"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/median-of-two-sorted-arrays/"},
+                {"id": "5", "title": "Longest Palindromic Substring", "slug": "longest-palindromic-substring", "difficulty": "Medium", "topicTags": ["String", "Dynamic Programming"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/longest-palindromic-substring/"},
+                {"id": "20", "title": "Valid Parentheses", "slug": "valid-parentheses", "difficulty": "Easy", "topicTags": ["String", "Stack"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/valid-parentheses/"},
+                {"id": "42", "title": "Trapping Rain Water", "slug": "trapping-rain-water", "difficulty": "Hard", "topicTags": ["Array", "Two Pointers", "Stack", "Dynamic Programming"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/trapping-rain-water/"},
+                {"id": "56", "title": "Merge Intervals", "slug": "merge-intervals", "difficulty": "Medium", "topicTags": ["Array", "Sorting"], "paidOnly": False, "frequency": 89, "url": "https://leetcode.com/problems/merge-intervals/"},
+                {"id": "200", "title": "Number of Islands", "slug": "number-of-islands", "difficulty": "Medium", "topicTags": ["Array", "BFS", "DFS", "Union Find"], "paidOnly": False, "frequency": 87, "url": "https://leetcode.com/problems/number-of-islands/"},
+                {"id": "146", "title": "LRU Cache", "slug": "lru-cache", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List", "Design"], "paidOnly": False, "frequency": 91, "url": "https://leetcode.com/problems/lru-cache/"},
+                {"id": "322", "title": "Coin Change", "slug": "coin-change", "difficulty": "Medium", "topicTags": ["Array", "Dynamic Programming", "BFS"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/coin-change/"},
+                {"id": "253", "title": "Meeting Rooms II", "slug": "meeting-rooms-ii", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers", "Greedy", "Sorting", "Heap"], "paidOnly": True, "frequency": 93, "url": "https://leetcode.com/problems/meeting-rooms-ii/"},
+                {"id": "76", "title": "Minimum Window Substring", "slug": "minimum-window-substring", "difficulty": "Hard", "topicTags": ["Hash Table", "String", "Sliding Window"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/minimum-window-substring/"},
+                {"id": "23", "title": "Merge k Sorted Lists", "slug": "merge-k-sorted-lists", "difficulty": "Hard", "topicTags": ["Linked List", "Divide and Conquer", "Heap"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/merge-k-sorted-lists/"},
+            ],
+        },
+        "amazon": {
+            "company": "Amazon", "slug": "amazon",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 97, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "2", "title": "Add Two Numbers", "slug": "add-two-numbers", "difficulty": "Medium", "topicTags": ["Linked List", "Math", "Recursion"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/add-two-numbers/"},
+                {"id": "3", "title": "Longest Substring Without Repeating Characters", "slug": "longest-substring-without-repeating-characters", "difficulty": "Medium", "topicTags": ["Hash Table", "String", "Sliding Window"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/longest-substring-without-repeating-characters/"},
+                {"id": "21", "title": "Merge Two Sorted Lists", "slug": "merge-two-sorted-lists", "difficulty": "Easy", "topicTags": ["Linked List", "Recursion"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/merge-two-sorted-lists/"},
+                {"id": "49", "title": "Group Anagrams", "slug": "group-anagrams", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "String", "Sorting"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/group-anagrams/"},
+                {"id": "127", "title": "Word Ladder", "slug": "word-ladder", "difficulty": "Hard", "topicTags": ["Hash Table", "String", "BFS"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/word-ladder/"},
+                {"id": "138", "title": "Copy List with Random Pointer", "slug": "copy-list-with-random-pointer", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/copy-list-with-random-pointer/"},
+                {"id": "200", "title": "Number of Islands", "slug": "number-of-islands", "difficulty": "Medium", "topicTags": ["Array", "BFS", "DFS", "Union Find"], "paidOnly": False, "frequency": 93, "url": "https://leetcode.com/problems/number-of-islands/"},
+                {"id": "297", "title": "Serialize and Deserialize Binary Tree", "slug": "serialize-and-deserialize-binary-tree", "difficulty": "Hard", "topicTags": ["String", "Tree", "DFS", "BFS", "Design"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/serialize-and-deserialize-binary-tree/"},
+                {"id": "937", "title": "Reorder Data in Log Files", "slug": "reorder-data-in-log-files", "difficulty": "Medium", "topicTags": ["Array", "String", "Sorting"], "paidOnly": False, "frequency": 91, "url": "https://leetcode.com/problems/reorder-data-in-log-files/"},
+                {"id": "973", "title": "K Closest Points to Origin", "slug": "k-closest-points-to-origin", "difficulty": "Medium", "topicTags": ["Array", "Math", "Divide and Conquer", "Sorting", "Heap"], "paidOnly": False, "frequency": 89, "url": "https://leetcode.com/problems/k-closest-points-to-origin/"},
+                {"id": "819", "title": "Most Common Word", "slug": "most-common-word", "difficulty": "Easy", "topicTags": ["Hash Table", "String", "Counting"], "paidOnly": False, "frequency": 87, "url": "https://leetcode.com/problems/most-common-word/"},
+            ],
+        },
+        "facebook": {
+            "company": "Meta", "slug": "facebook",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "15", "title": "3Sum", "slug": "3sum", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers", "Sorting"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/3sum/"},
+                {"id": "23", "title": "Merge k Sorted Lists", "slug": "merge-k-sorted-lists", "difficulty": "Hard", "topicTags": ["Linked List", "Divide and Conquer", "Heap"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/merge-k-sorted-lists/"},
+                {"id": "56", "title": "Merge Intervals", "slug": "merge-intervals", "difficulty": "Medium", "topicTags": ["Array", "Sorting"], "paidOnly": False, "frequency": 95, "url": "https://leetcode.com/problems/merge-intervals/"},
+                {"id": "88", "title": "Merge Sorted Array", "slug": "merge-sorted-array", "difficulty": "Easy", "topicTags": ["Array", "Two Pointers", "Sorting"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/merge-sorted-array/"},
+                {"id": "121", "title": "Best Time to Buy and Sell Stock", "slug": "best-time-to-buy-and-sell-stock", "difficulty": "Easy", "topicTags": ["Array", "Dynamic Programming"], "paidOnly": False, "frequency": 87, "url": "https://leetcode.com/problems/best-time-to-buy-and-sell-stock/"},
+                {"id": "124", "title": "Binary Tree Maximum Path Sum", "slug": "binary-tree-maximum-path-sum", "difficulty": "Hard", "topicTags": ["Dynamic Programming", "Tree", "DFS"], "paidOnly": False, "frequency": 91, "url": "https://leetcode.com/problems/binary-tree-maximum-path-sum/"},
+                {"id": "199", "title": "Binary Tree Right Side View", "slug": "binary-tree-right-side-view", "difficulty": "Medium", "topicTags": ["Tree", "DFS", "BFS"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/binary-tree-right-side-view/"},
+                {"id": "215", "title": "Kth Largest Element in an Array", "slug": "kth-largest-element-in-an-array", "difficulty": "Medium", "topicTags": ["Array", "Divide and Conquer", "Sorting", "Heap"], "paidOnly": False, "frequency": 93, "url": "https://leetcode.com/problems/kth-largest-element-in-an-array/"},
+                {"id": "301", "title": "Remove Invalid Parentheses", "slug": "remove-invalid-parentheses", "difficulty": "Hard", "topicTags": ["String", "BFS", "DFS"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/remove-invalid-parentheses/"},
+                {"id": "621", "title": "Task Scheduler", "slug": "task-scheduler", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Greedy", "Sorting", "Heap"], "paidOnly": False, "frequency": 89, "url": "https://leetcode.com/problems/task-scheduler/"},
+                {"id": "986", "title": "Interval List Intersections", "slug": "interval-list-intersections", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/interval-list-intersections/"},
+            ],
+        },
+        "apple": {
+            "company": "Apple", "slug": "apple",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "7", "title": "Reverse Integer", "slug": "reverse-integer", "difficulty": "Medium", "topicTags": ["Math"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/reverse-integer/"},
+                {"id": "11", "title": "Container With Most Water", "slug": "container-with-most-water", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers", "Greedy"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/container-with-most-water/"},
+                {"id": "53", "title": "Maximum Subarray", "slug": "maximum-subarray", "difficulty": "Medium", "topicTags": ["Array", "Divide and Conquer", "Dynamic Programming"], "paidOnly": False, "frequency": 87, "url": "https://leetcode.com/problems/maximum-subarray/"},
+                {"id": "70", "title": "Climbing Stairs", "slug": "climbing-stairs", "difficulty": "Easy", "topicTags": ["Math", "Dynamic Programming", "Memoization"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/climbing-stairs/"},
+                {"id": "146", "title": "LRU Cache", "slug": "lru-cache", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List", "Design"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/lru-cache/"},
+                {"id": "206", "title": "Reverse Linked List", "slug": "reverse-linked-list", "difficulty": "Easy", "topicTags": ["Linked List", "Recursion"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/reverse-linked-list/"},
+                {"id": "238", "title": "Product of Array Except Self", "slug": "product-of-array-except-self", "difficulty": "Medium", "topicTags": ["Array", "Prefix Sum"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/product-of-array-except-self/"},
+                {"id": "283", "title": "Move Zeroes", "slug": "move-zeroes", "difficulty": "Easy", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/move-zeroes/"},
+                {"id": "347", "title": "Top K Frequent Elements", "slug": "top-k-frequent-elements", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Sorting", "Heap"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/top-k-frequent-elements/"},
+            ],
+        },
+        "microsoft": {
+            "company": "Microsoft", "slug": "microsoft",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "2", "title": "Add Two Numbers", "slug": "add-two-numbers", "difficulty": "Medium", "topicTags": ["Linked List", "Math", "Recursion"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/add-two-numbers/"},
+                {"id": "33", "title": "Search in Rotated Sorted Array", "slug": "search-in-rotated-sorted-array", "difficulty": "Medium", "topicTags": ["Array", "Binary Search"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/search-in-rotated-sorted-array/"},
+                {"id": "54", "title": "Spiral Matrix", "slug": "spiral-matrix", "difficulty": "Medium", "topicTags": ["Array", "Matrix", "Simulation"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/spiral-matrix/"},
+                {"id": "73", "title": "Set Matrix Zeroes", "slug": "set-matrix-zeroes", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Matrix"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/set-matrix-zeroes/"},
+                {"id": "146", "title": "LRU Cache", "slug": "lru-cache", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List", "Design"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/lru-cache/"},
+                {"id": "151", "title": "Reverse Words in a String", "slug": "reverse-words-in-a-string", "difficulty": "Medium", "topicTags": ["Two Pointers", "String"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/reverse-words-in-a-string/"},
+                {"id": "212", "title": "Word Search II", "slug": "word-search-ii", "difficulty": "Hard", "topicTags": ["Array", "String", "Backtracking", "Trie", "Matrix"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/word-search-ii/"},
+                {"id": "236", "title": "Lowest Common Ancestor of a Binary Tree", "slug": "lowest-common-ancestor-of-a-binary-tree", "difficulty": "Medium", "topicTags": ["Tree", "DFS", "Binary Tree"], "paidOnly": False, "frequency": 89, "url": "https://leetcode.com/problems/lowest-common-ancestor-of-a-binary-tree/"},
+                {"id": "348", "title": "Design Tic-Tac-Toe", "slug": "design-tic-tac-toe", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Design", "Matrix"], "paidOnly": True, "frequency": 87, "url": "https://leetcode.com/problems/design-tic-tac-toe/"},
+                {"id": "545", "title": "Boundary of Binary Tree", "slug": "boundary-of-binary-tree", "difficulty": "Medium", "topicTags": ["Tree", "DFS", "Binary Tree"], "paidOnly": True, "frequency": 81, "url": "https://leetcode.com/problems/boundary-of-binary-tree/"},
+            ],
+        },
+        "netflix": {
+            "company": "Netflix", "slug": "netflix",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "3", "title": "Longest Substring Without Repeating Characters", "slug": "longest-substring-without-repeating-characters", "difficulty": "Medium", "topicTags": ["Hash Table", "String", "Sliding Window"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/longest-substring-without-repeating-characters/"},
+                {"id": "146", "title": "LRU Cache", "slug": "lru-cache", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List", "Design"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/lru-cache/"},
+                {"id": "200", "title": "Number of Islands", "slug": "number-of-islands", "difficulty": "Medium", "topicTags": ["Array", "BFS", "DFS", "Union Find"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/number-of-islands/"},
+                {"id": "207", "title": "Course Schedule", "slug": "course-schedule", "difficulty": "Medium", "topicTags": ["DFS", "BFS", "Graph", "Topological Sort"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/course-schedule/"},
+                {"id": "239", "title": "Sliding Window Maximum", "slug": "sliding-window-maximum", "difficulty": "Hard", "topicTags": ["Array", "Queue", "Sliding Window", "Heap", "Monotonic Queue"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/sliding-window-maximum/"},
+                {"id": "295", "title": "Find Median from Data Stream", "slug": "find-median-from-data-stream", "difficulty": "Hard", "topicTags": ["Two Pointers", "Design", "Sorting", "Heap", "Data Stream"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/find-median-from-data-stream/"},
+                {"id": "380", "title": "Insert Delete GetRandom O(1)", "slug": "insert-delete-getrandom-o1", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Math", "Design", "Randomized"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/insert-delete-getrandom-o1/"},
+            ],
+        },
+        "bloomberg": {
+            "company": "Bloomberg", "slug": "bloomberg",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "20", "title": "Valid Parentheses", "slug": "valid-parentheses", "difficulty": "Easy", "topicTags": ["String", "Stack"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/valid-parentheses/"},
+                {"id": "42", "title": "Trapping Rain Water", "slug": "trapping-rain-water", "difficulty": "Hard", "topicTags": ["Array", "Two Pointers", "Stack", "Dynamic Programming"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/trapping-rain-water/"},
+                {"id": "146", "title": "LRU Cache", "slug": "lru-cache", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List", "Design"], "paidOnly": False, "frequency": 87, "url": "https://leetcode.com/problems/lru-cache/"},
+                {"id": "238", "title": "Product of Array Except Self", "slug": "product-of-array-except-self", "difficulty": "Medium", "topicTags": ["Array", "Prefix Sum"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/product-of-array-except-self/"},
+                {"id": "380", "title": "Insert Delete GetRandom O(1)", "slug": "insert-delete-getrandom-o1", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Math", "Design", "Randomized"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/insert-delete-getrandom-o1/"},
+                {"id": "692", "title": "Top K Frequent Words", "slug": "top-k-frequent-words", "difficulty": "Medium", "topicTags": ["Hash Table", "String", "Trie", "Sorting", "Heap"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/top-k-frequent-words/"},
+                {"id": "735", "title": "Asteroid Collision", "slug": "asteroid-collision", "difficulty": "Medium", "topicTags": ["Array", "Stack", "Simulation"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/asteroid-collision/"},
+            ],
+        },
+        "goldman-sachs": {
+            "company": "Goldman Sachs", "slug": "goldman-sachs",
+            "problems": [
+                {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/two-sum/"},
+                {"id": "11", "title": "Container With Most Water", "slug": "container-with-most-water", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers", "Greedy"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/container-with-most-water/"},
+                {"id": "15", "title": "3Sum", "slug": "3sum", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers", "Sorting"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/3sum/"},
+                {"id": "48", "title": "Rotate Image", "slug": "rotate-image", "difficulty": "Medium", "topicTags": ["Array", "Math", "Matrix"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/rotate-image/"},
+                {"id": "54", "title": "Spiral Matrix", "slug": "spiral-matrix", "difficulty": "Medium", "topicTags": ["Array", "Matrix", "Simulation"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/spiral-matrix/"},
+                {"id": "242", "title": "Valid Anagram", "slug": "valid-anagram", "difficulty": "Easy", "topicTags": ["Hash Table", "String", "Sorting"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/valid-anagram/"},
+                {"id": "347", "title": "Top K Frequent Elements", "slug": "top-k-frequent-elements", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Sorting", "Heap"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/top-k-frequent-elements/"},
+                {"id": "380", "title": "Insert Delete GetRandom O(1)", "slug": "insert-delete-getrandom-o1", "difficulty": "Medium", "topicTags": ["Array", "Hash Table", "Math", "Design", "Randomized"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/insert-delete-getrandom-o1/"},
+            ],
+        },
+    }
+
+    entry = _DATA.get(slug)
+    if not entry:
+        return None
+
+    return {
+        "company": entry["company"],
+        "slug": entry["slug"],
+        "total_problems": len(entry["problems"]),
+        "problems": entry["problems"],
+        "last_updated": datetime.utcnow().isoformat(),
+    }
+
 
 # ============ ERROR HANDLERS ============
 
