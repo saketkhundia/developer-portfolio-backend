@@ -32,11 +32,13 @@ def fetch_github_data(username: str):
 
         for repo in repos:
             all_repos.append({
-                "name":       repo["name"],
-                "stars":      repo["stargazers_count"],
-                "forks":      repo["forks_count"],
-                "language":   repo["language"],
-                "updated_at": repo["updated_at"],
+                "name":        repo["name"],
+                "stars":       repo["stargazers_count"],
+                "forks":       repo["forks_count"],
+                "language":    repo["language"],
+                "description": repo.get("description") or "",
+                "topics":      repo.get("topics") or [],
+                "updated_at":  repo["updated_at"],
             })
         page += 1
 
