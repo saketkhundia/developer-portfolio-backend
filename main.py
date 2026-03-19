@@ -38,10 +38,11 @@ except ImportError as e:
         return {"enabled": False, "reason": "cache dependency missing"}
 
 try:
-    from github import fetch_github_data
+    from github import fetch_github_data, analyze_repo_quality
 except ImportError as e:
     print(f"IMPORT ERROR (github): {e}")
     fetch_github_data = _missing_feature("github", e)
+    analyze_repo_quality = _missing_feature("github", e)
 
 try:
     from analytics import calculate_skill_score
@@ -1387,6 +1388,30 @@ async def analyze(username: str, request: Request, response: Response):
         cache_entry = set_cached_data("github", username, result)
         add_cache_headers(response, cache_entry["etag"], max_age=300)
         
+        return result
+    except Exception as e:
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/github-quality/{username}")
+async def github_quality(username: str, request: Request, response: Response):
+    """Analyze repository maturity/quality for a user's GitHub projects."""
+    try:
+        cached = get_cached_data("github_quality", username)
+
+        if cached:
+            if check_etag(request, cached["etag"]):
+                response.status_code = 304
+                return Response(status_code=304)
+
+            add_cache_headers(response, cached["etag"], max_age=600)
+            return cached["data"]
+
+        repos = fetch_github_data(username)
+        result = analyze_repo_quality(username, repos)
+        cache_entry = set_cached_data("github_quality", username, result)
+        add_cache_headers(response, cache_entry["etag"], max_age=600)
         return result
     except Exception as e:
         print(traceback.format_exc())
