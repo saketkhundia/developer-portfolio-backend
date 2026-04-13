@@ -201,8 +201,10 @@ async def ai_insights(
         raise HTTPException(500, "Groq API key not configured")
     
     try:
-        # Initialize Groq client - avoid passing proxies parameter
-        client = Groq(api_key=groq_api_key)
+        # Initialize Groq client with only the API key
+        client = Groq(
+            api_key=groq_api_key,
+        )
         
         # Prepare messages for Groq API
         messages = [
@@ -230,11 +232,14 @@ async def ai_insights(
             "status": "success"
         }
     
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error calling Groq API: {e}")
+        error_msg = str(e)
+        print(f"Groq API Error: {error_msg}")
         import traceback
         print(traceback.format_exc())
-        raise HTTPException(500, f"AI service error: {str(e)}")
+        raise HTTPException(500, f"AI service error: {error_msg}")
 
 
 def _uid_from_email(email: str) -> str:
