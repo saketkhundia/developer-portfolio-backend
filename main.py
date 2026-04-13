@@ -431,11 +431,54 @@ def get_contributions(username: str):
         if not data.get("data") or not data["data"].get("user"):
             raise HTTPException(404, f"GitHub user not found: {username}")
         
-        contribution_data = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]
+        calendar = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]
+        
+        # Transform contribution_calendar into expected format
+        level_map = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "VERY_HIGH": 4}
+        contributions = []
+        
+        for week in calendar.get("weeks", []):
+            for day in week.get("contributionDays", []):
+                contributions.append({
+                    "date": day["date"],
+                    "count": day["contributionCount"],
+                    "level": level_map.get(day.get("contributionLevel", "NONE"), 0)
+                })
+        
+        # Calculate streaks and busiest day
+        current_streak = 0
+        longest_streak = 0
+        streak = 0
+        total_contrib = 0
+        busiest_day = None
+        max_count = 0
+        
+        # Process in reverse order for current streak (most recent first)
+        for day_data in reversed(contributions):
+            if day_data["count"] > 0:
+                current_streak += 1
+            else:
+                break
+        
+        # Calculate longest streak
+        for day_data in contributions:
+            total_contrib += day_data["count"]
+            if day_data["count"] > 0:
+                streak += 1
+                longest_streak = max(longest_streak, streak)
+            else:
+                streak = 0
+            
+            if day_data["count"] > max_count:
+                max_count = day_data["count"]
+                busiest_day = {"date": day_data["date"], "count": day_data["count"]}
         
         return {
-            "username": username,
-            "contribution_calendar": contribution_data
+            "contributions": contributions,
+            "total_last_year": calendar.get("totalContributions", total_contrib),
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+            "busiest_day": busiest_day
         }
     
     except HTTPException:
