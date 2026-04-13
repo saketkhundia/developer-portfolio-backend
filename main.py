@@ -1,6 +1,5 @@
 import os
 from dotenv import load_dotenv
-from groq import Groq
 import pymongo
 from pymongo import MongoClient
 
