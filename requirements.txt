@@ -7,5 +7,5 @@ requests==2.31.0
 groq==0.4.2
 pymongo==4.6.0
 motor==3.3.2
-PyJWT==2.8.1
+PyJWT==2.12.1
 cryptography==41.0.7
