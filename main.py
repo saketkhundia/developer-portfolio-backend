@@ -32,13 +32,18 @@ from analytics import calculate_skill_score
 app = FastAPI()
 
 # allow_origins cannot be '*' when credentials=True; specify the
-# frontend origin(s) explicitly. You can set FRONTEND_ORIGINS to a
-# comma-separated list of allowed origins (e.g. http://localhost:3000).
-front = os.environ.get(
-    "FRONTEND_ORIGINS",
-    "http://localhost:3000,https://deviq.online,https://www.deviq.online,https://saket21s.github.io,https://developerintelligencedashboard.web.app",
-)
-allow_list = [o.strip() for o in front.split(",") if o.strip()]
+# frontend origin(s) explicitly. FRONTEND_ORIGINS can add more origins,
+# but safe defaults are always included to prevent lockouts.
+default_origins = [
+    "http://localhost:3000",
+    "https://deviq.online",
+    "https://www.deviq.online",
+    "https://saket21s.github.io",
+    "https://developerintelligencedashboard.web.app",
+]
+front = os.environ.get("FRONTEND_ORIGINS", "")
+extra_origins = [o.strip() for o in front.split(",") if o.strip()]
+allow_list = sorted(set(default_origins + extra_origins))
 print(f"✅ CORS allowed origins: {allow_list}")
 
 app.add_middleware(
