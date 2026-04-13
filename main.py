@@ -1,13 +1,8 @@
 import os
 from dotenv import load_dotenv
+from groq import Groq
 import pymongo
 from pymongo import MongoClient
-import requests
-import jwt
-try:
-    from groq import Groq
-except Exception:
-    Groq = None
 
 # Load environment variables from .env file
 load_dotenv()
@@ -17,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -38,18 +33,10 @@ from analytics import calculate_skill_score
 app = FastAPI()
 
 # allow_origins cannot be '*' when credentials=True; specify the
-# frontend origin(s) explicitly. FRONTEND_ORIGINS can add more origins,
-# but safe defaults are always included to prevent lockouts.
-default_origins = [
-    "http://localhost:3000",
-    "https://deviq.online",
-    "https://www.deviq.online",
-    "https://saket21s.github.io",
-    "https://developerintelligencedashboard.web.app",
-]
-front = os.environ.get("FRONTEND_ORIGINS", "")
-extra_origins = [o.strip() for o in front.split(",") if o.strip()]
-allow_list = sorted(set(default_origins + extra_origins))
+# frontend origin(s) explicitly. You can set FRONTEND_ORIGINS to a
+# comma-separated list of allowed origins (e.g. http://localhost:3000).
+front = os.environ.get("FRONTEND_ORIGINS", "http://localhost:3000,https://deviq.online,https://developerintelligencedashboard.web.app")
+allow_list = [o.strip() for o in front.split(",") if o.strip()]
 print(f"✅ CORS allowed origins: {allow_list}")
 
 app.add_middleware(
@@ -79,8 +66,6 @@ def home():
 
 
 class OAuthUserData(BaseModel):
-    code: Optional[str] = None
-    redirect_uri: Optional[str] = None
     name: Optional[str] = None
     email: Optional[str] = None
     avatar: Optional[str] = None
@@ -109,8 +94,6 @@ async def ai_insights(
     groq_api_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_api_key:
         raise HTTPException(500, "Groq API key not configured")
-    if Groq is None:
-        raise HTTPException(500, "Groq SDK is not installed on the server")
     
     try:
         client = Groq(api_key=groq_api_key)
@@ -173,172 +156,85 @@ async def resolve_uid(
 
 @app.post("/auth/oauth")
 async def oauth_login(data: OAuthUserData):
-    """Exchange OAuth code and return app token + normalized user profile."""
-    provider = (data.provider or "google").lower()
-    code = data.code
-    redirect_uri = data.redirect_uri
+    """Register/login an OAuth user (Google or GitHub)"""
+    if not db:
+        raise HTTPException(500, "MongoDB not configured")
+    
+    # Extract user data from request - handle both flat and nested structures
+    name = data.name
+    email = data.email
+    avatar = data.avatar or data.profile_picture_url
+    provider = data.provider or "google"
+    
+    # Check nested user object if top-level fields are missing
+    if data.user and isinstance(data.user, dict):
+        name = name or data.user.get("name")
+        email = email or data.user.get("email")
+        avatar = avatar or data.user.get("picture")
+    
+    print("OAuth request received")
+    print(f"Parsed payload: name={name}, email={email}, provider={provider}")
+    
+    if not email:
+        print("OAuth request missing email")
+        raise HTTPException(400, "Email is required")
 
-    if provider not in {"google", "github"}:
-        raise HTTPException(400, "Unsupported provider")
-    if not code:
-        raise HTTPException(400, "Missing authorization code")
-    if not redirect_uri:
-        raise HTTPException(400, "Missing redirect_uri")
-
+    # Fallback name so OAuth can still succeed when providers omit display name.
+    if not name:
+        name = email.split("@")[0]
+    
     try:
-        user_info = None
-
-        if provider == "google":
-            client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
-            client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-            if not client_id or not client_secret:
-                raise HTTPException(500, "Google OAuth is not configured")
-
-            token_resp = requests.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "code": code,
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "redirect_uri": redirect_uri,
-                    "grant_type": "authorization_code",
-                },
-                timeout=15,
-            )
-            if token_resp.status_code != 200:
-                raise HTTPException(400, "Google token exchange failed")
-
-            google_access_token = token_resp.json().get("access_token")
-            if not google_access_token:
-                raise HTTPException(400, "Google access token missing")
-
-            user_resp = requests.get(
-                "https://www.googleapis.com/oauth2/v2/userinfo",
-                headers={"Authorization": f"Bearer {google_access_token}"},
-                timeout=15,
-            )
-            if user_resp.status_code != 200:
-                raise HTTPException(400, "Failed to fetch Google user profile")
-
-            g = user_resp.json()
-            user_info = {
-                "id": g.get("id") or g.get("email"),
-                "name": g.get("name") or (g.get("email") or "").split("@")[0],
-                "email": g.get("email"),
-                "profile_picture_url": g.get("picture"),
-                "provider": "google",
-            }
-
-        else:
-            client_id = os.environ.get("GITHUB_CLIENT_ID", "")
-            client_secret = os.environ.get("GITHUB_CLIENT_SECRET", "")
-            if not client_id or not client_secret:
-                raise HTTPException(500, "GitHub OAuth is not configured")
-
-            token_resp = requests.post(
-                "https://github.com/login/oauth/access_token",
-                data={
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "code": code,
-                    "redirect_uri": redirect_uri,
-                },
-                headers={"Accept": "application/json"},
-                timeout=15,
-            )
-            if token_resp.status_code != 200:
-                raise HTTPException(400, "GitHub token exchange failed")
-
-            github_access_token = token_resp.json().get("access_token")
-            if not github_access_token:
-                raise HTTPException(400, "GitHub access token missing")
-
-            user_resp = requests.get(
-                "https://api.github.com/user",
-                headers={
-                    "Authorization": f"Bearer {github_access_token}",
-                    "Accept": "application/vnd.github+json",
-                },
-                timeout=15,
-            )
-            if user_resp.status_code != 200:
-                raise HTTPException(400, "Failed to fetch GitHub user profile")
-
-            gh = user_resp.json()
-            email = gh.get("email")
-            if not email:
-                emails_resp = requests.get(
-                    "https://api.github.com/user/emails",
-                    headers={
-                        "Authorization": f"Bearer {github_access_token}",
-                        "Accept": "application/vnd.github+json",
-                    },
-                    timeout=15,
-                )
-                if emails_resp.status_code == 200:
-                    emails = emails_resp.json()
-                    primary = next((e for e in emails if e.get("primary") and e.get("verified")), None)
-                    fallback = next((e for e in emails if e.get("verified")), None)
-                    chosen = primary or fallback
-                    email = chosen.get("email") if chosen else None
-
-            if not email:
-                raise HTTPException(400, "GitHub account does not expose an email")
-
-            user_info = {
-                "id": str(gh.get("id") or email),
-                "name": gh.get("name") or gh.get("login") or email.split("@")[0],
-                "email": email,
-                "profile_picture_url": gh.get("avatar_url"),
-                "provider": "github",
-            }
-
-        if not user_info or not user_info.get("email"):
-            raise HTTPException(400, "Provider did not return a usable email")
-
-        # Best-effort user sync; auth should still work if DB is temporarily unavailable.
-        if db is not None:
-            try:
-                users_collection = db["users"]
-                payload = {
-                    "name": user_info.get("name"),
-                    "email": user_info.get("email"),
-                    "avatar": user_info.get("profile_picture_url"),
-                    "provider": user_info.get("provider"),
-                    "updatedAt": datetime.now(timezone.utc).isoformat(),
-                }
-                existing_user = users_collection.find_one({"email": user_info.get("email")})
-                if not existing_user:
-                    payload["createdAt"] = datetime.now(timezone.utc).isoformat()
-                users_collection.update_one({"email": user_info.get("email")}, {"$set": payload}, upsert=True)
-            except Exception as db_err:
-                # Do not block OAuth login on database issues.
-                print(f"⚠️ OAuth DB sync skipped: {db_err}")
-
-        jwt_secret = os.environ.get("JWT_SECRET", "deviq_dev_secret_change_me")
-        app_token = jwt.encode(
-            {
-                "sub": user_info.get("email"),
-                "email": user_info.get("email"),
-                "provider": user_info.get("provider"),
-                "exp": datetime.now(timezone.utc) + timedelta(days=7),
-            },
-            jwt_secret,
-            algorithm="HS256",
-        )
-
-        return {
-            "access_token": app_token,
-            "token_type": "bearer",
-            "provider": user_info.get("provider"),
-            "user": user_info,
+        # Use email as MongoDB document ID
+        users_collection = db["users"]
+        
+        payload = {
+            "name": name,
+            "email": email,
+            "avatar": avatar,
+            "provider": provider,
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
+        
+        # Check if user exists
+        existing_user = users_collection.find_one({"email": email})
+        if not existing_user:
+            payload["createdAt"] = datetime.now(timezone.utc).isoformat()
+        
+        # Upsert user
+        users_collection.update_one(
+            {"email": email},
+            {"$set": payload},
+            upsert=True
+        )
+        
+        print(f"OAuth profile synced for {email}")
 
+        # Retrieve and return user data
+        user_doc = users_collection.find_one({"email": email})
+
+        if not user_doc:
+            print("OAuth profile write verification failed")
+            raise HTTPException(500, "Could not verify user was created")
+
+        # Remove MongoDB ID from response for cleaner JSON
+        user_data = dict(user_doc)
+        user_data.pop("_id", None)
+        print("OAuth endpoint completed successfully")
+        
+        return {
+            "user": user_data,
+            "uid": email,
+            "message": "OAuth user synced successfully"
+        }
+    
     except HTTPException:
         raise
-    except requests.RequestException as e:
-        raise HTTPException(502, f"OAuth provider request failed: {str(e)}")
     except Exception as e:
+        print("Unexpected error in OAuth login")
+        print(f"Error type: {type(e).__name__}")
+        print(f"Error message: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
         raise HTTPException(500, f"OAuth sync failed: {str(e)}")
 
 
@@ -356,114 +252,6 @@ def analyze(username: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch GitHub data: {str(e)}")
-
-
-@app.get("/contributions/{username}")
-def github_contributions(username: str):
-    """Fetch GitHub contribution calendar and streak stats for a user."""
-    empty = {
-        "contributions": [],
-        "total_last_year": 0,
-        "current_streak": 0,
-        "longest_streak": 0,
-    }
-
-    token = os.environ.get("GITHUB_TOKEN", "")
-    if not token:
-        return {**empty, "error": "GITHUB_TOKEN is not configured"}
-
-    query = """
-    query($login:String!){
-      user(login:$login){
-        contributionsCollection{
-          contributionCalendar{
-            totalContributions
-            weeks{
-              contributionDays{
-                date
-                contributionCount
-                contributionLevel
-              }
-            }
-          }
-        }
-      }
-    }
-    """
-    level_map = {
-        "NONE": 0,
-        "FIRST_QUARTILE": 1,
-        "SECOND_QUARTILE": 2,
-        "THIRD_QUARTILE": 3,
-        "FOURTH_QUARTILE": 4,
-    }
-
-    try:
-        resp = requests.post(
-            "https://api.github.com/graphql",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                "User-Agent": "DevIQ/1.0",
-            },
-            json={"query": query, "variables": {"login": username}},
-            timeout=20,
-        )
-
-        if resp.status_code != 200:
-            return {**empty, "error": f"GitHub API {resp.status_code}"}
-
-        body = resp.json()
-        if body.get("errors"):
-            return {**empty, "error": body["errors"][0].get("message", "GitHub GraphQL error")}
-
-        user = (body.get("data") or {}).get("user")
-        if not user:
-            return {**empty, "error": f"User '{username}' not found"}
-
-        calendar = user["contributionsCollection"]["contributionCalendar"]
-        contributions = []
-        for week in calendar.get("weeks", []):
-            for day in week.get("contributionDays", []):
-                contributions.append(
-                    {
-                        "date": day.get("date"),
-                        "count": int(day.get("contributionCount", 0)),
-                        "level": level_map.get(day.get("contributionLevel", "NONE"), 0),
-                    }
-                )
-
-        contributions.sort(key=lambda d: d["date"])
-
-        longest = 0
-        temp = 0
-        for d in contributions:
-            if d["count"] > 0:
-                temp += 1
-                longest = max(longest, temp)
-            else:
-                temp = 0
-
-        current = 0
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        days_for_streak = contributions
-        if contributions and contributions[-1]["date"] == today and contributions[-1]["count"] == 0:
-            days_for_streak = contributions[:-1]
-
-        for d in reversed(days_for_streak):
-            if d["count"] > 0:
-                current += 1
-            else:
-                break
-
-        return {
-            "contributions": contributions,
-            "total_last_year": int(calendar.get("totalContributions", 0)),
-            "current_streak": current,
-            "longest_streak": longest,
-        }
-    except Exception as e:
-        return {**empty, "error": str(e)}
 
 @app.get("/leetcode/{username}")
 def leetcode_analyze(username: str):
@@ -504,7 +292,7 @@ def codeforces_analyze(username: str):
 @app.get("/auth/me")
 async def me(authorization: Optional[str] = Header(None)):
     """Get current authenticated user profile"""
-    if db is None:
+    if not db:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await verify_firebase_token(authorization)
@@ -525,7 +313,7 @@ def logout():
 @app.delete("/auth/account")
 async def delete_account(authorization: Optional[str] = Header(None)):
     """Delete authenticated user account"""
-    if db is None:
+    if not db:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await verify_firebase_token(authorization)
@@ -542,7 +330,7 @@ async def get_profile(
     x_user_email: Optional[str] = Header(None),
 ):
     """Get user's portfolio profile data"""
-    if db is None:
+    if not db:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -561,7 +349,7 @@ async def set_profile(
     x_user_email: Optional[str] = Header(None),
 ):
     """Update user's portfolio profile data"""
-    if db is None:
+    if not db:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -588,7 +376,7 @@ async def sync_profile(
     x_user_email: Optional[str] = Header(None),
 ):
     """Sync user profile data to backend (supports token or email fallback)"""
-    if db is None:
+    if not db:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -619,7 +407,7 @@ async def save_profile_picture(
     x_user_email: Optional[str] = Header(None),
 ):
     """Save user's profile picture URL"""
-    if db is None:
+    if not db:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -654,7 +442,7 @@ async def get_connected_accounts(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None),
 ):
-    if db is None:
+    if not db:
         raise HTTPException(500, "Firebase not configured")
 
     uid = await resolve_uid(authorization, x_user_email)
@@ -688,7 +476,7 @@ async def connect_account(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None),
 ):
-    if db is None:
+    if not db:
         raise HTTPException(500, "Firebase not configured")
 
     normalized_platform = platform.strip().lower()
@@ -744,7 +532,7 @@ async def disconnect_account(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None),
 ):
-    if db is None:
+    if not db:
         raise HTTPException(500, "Firebase not configured")
 
     normalized_platform = platform.strip().lower()
