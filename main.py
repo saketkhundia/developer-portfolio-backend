@@ -283,12 +283,23 @@ async def oauth_login(data: OAuthUserData):
         if not redirect_uri:
             raise HTTPException(400, "redirect_uri is required for OAuth code exchange")
 
-        if provider == "google":
-            exchanged = _exchange_google_code(data.code, redirect_uri)
-        elif provider == "github":
-            exchanged = _exchange_github_code(data.code, redirect_uri)
-        else:
-            raise HTTPException(400, f"Unsupported OAuth provider: {provider}")
+        try:
+            if provider == "google":
+                exchanged = _exchange_google_code(data.code, redirect_uri)
+            elif provider == "github":
+                exchanged = _exchange_github_code(data.code, redirect_uri)
+            else:
+                raise HTTPException(400, f"Unsupported OAuth provider: {provider}")
+        except Exception as e:
+            # Detailed logging for OAuth exchange failures
+            print(f"CRITICAL: OAuth code exchange failed for provider '{provider}'.")
+            print(f"  - Code: {data.code[:10]}... (truncated)")
+            print(f"  - Redirect URI: {redirect_uri}")
+            print(f"  - Error: {e}")
+            import traceback
+            print(traceback.format_exc())
+            # Re-raise to send error to client
+            raise HTTPException(status_code=500, detail=f"Failed to exchange OAuth code: {str(e)}")
 
         name = exchanged.get("name") or name
         email = exchanged.get("email") or email
@@ -683,4 +694,22 @@ async def disconnect_account(
     }, merge=True)
 
     return {"ok": True, "platform": normalized_platform}
+
+
+class LogEntry(BaseModel):
+    level: str = "error"
+    message: str
+    context: Optional[Dict[str, Any]] = None
+
+
+@app.post("/log")
+async def receive_log(entry: LogEntry):
+    """Receives a client-side log entry and prints it to the server console."""
+    timestamp = datetime.now(timezone.utc).isoformat()
+    print(f"CLIENT LOG [{entry.level.upper()}] @ {timestamp}: {entry.message}")
+    if entry.context:
+        # Pretty-print context for readability
+        context_str = json.dumps(entry.context, indent=2)
+        print(f"  Context: {context_str}")
+    return {"status": "logged"}
 
