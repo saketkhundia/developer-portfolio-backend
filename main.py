@@ -2,6 +2,8 @@ import os
 from dotenv import load_dotenv
 import pymongo
 from pymongo import MongoClient
+import requests
+import jwt
 
 # Load environment variables from .env file
 load_dotenv()
@@ -11,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 
@@ -73,6 +75,8 @@ def home():
 
 
 class OAuthUserData(BaseModel):
+    code: Optional[str] = None
+    redirect_uri: Optional[str] = None
     name: Optional[str] = None
     email: Optional[str] = None
     avatar: Optional[str] = None
@@ -163,85 +167,168 @@ async def resolve_uid(
 
 @app.post("/auth/oauth")
 async def oauth_login(data: OAuthUserData):
-    """Register/login an OAuth user (Google or GitHub)"""
-    if not db:
-        raise HTTPException(500, "MongoDB not configured")
-    
-    # Extract user data from request - handle both flat and nested structures
-    name = data.name
-    email = data.email
-    avatar = data.avatar or data.profile_picture_url
-    provider = data.provider or "google"
-    
-    # Check nested user object if top-level fields are missing
-    if data.user and isinstance(data.user, dict):
-        name = name or data.user.get("name")
-        email = email or data.user.get("email")
-        avatar = avatar or data.user.get("picture")
-    
-    print("OAuth request received")
-    print(f"Parsed payload: name={name}, email={email}, provider={provider}")
-    
-    if not email:
-        print("OAuth request missing email")
-        raise HTTPException(400, "Email is required")
+    """Exchange OAuth code and return app token + normalized user profile."""
+    provider = (data.provider or "google").lower()
+    code = data.code
+    redirect_uri = data.redirect_uri
 
-    # Fallback name so OAuth can still succeed when providers omit display name.
-    if not name:
-        name = email.split("@")[0]
-    
+    if provider not in {"google", "github"}:
+        raise HTTPException(400, "Unsupported provider")
+    if not code:
+        raise HTTPException(400, "Missing authorization code")
+    if not redirect_uri:
+        raise HTTPException(400, "Missing redirect_uri")
+
     try:
-        # Use email as MongoDB document ID
-        users_collection = db["users"]
-        
-        payload = {
-            "name": name,
-            "email": email,
-            "avatar": avatar,
-            "provider": provider,
-            "updatedAt": datetime.now(timezone.utc).isoformat(),
-        }
-        
-        # Check if user exists
-        existing_user = users_collection.find_one({"email": email})
-        if not existing_user:
-            payload["createdAt"] = datetime.now(timezone.utc).isoformat()
-        
-        # Upsert user
-        users_collection.update_one(
-            {"email": email},
-            {"$set": payload},
-            upsert=True
+        user_info = None
+
+        if provider == "google":
+            client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+            client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+            if not client_id or not client_secret:
+                raise HTTPException(500, "Google OAuth is not configured")
+
+            token_resp = requests.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "redirect_uri": redirect_uri,
+                    "grant_type": "authorization_code",
+                },
+                timeout=15,
+            )
+            if token_resp.status_code != 200:
+                raise HTTPException(400, "Google token exchange failed")
+
+            google_access_token = token_resp.json().get("access_token")
+            if not google_access_token:
+                raise HTTPException(400, "Google access token missing")
+
+            user_resp = requests.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {google_access_token}"},
+                timeout=15,
+            )
+            if user_resp.status_code != 200:
+                raise HTTPException(400, "Failed to fetch Google user profile")
+
+            g = user_resp.json()
+            user_info = {
+                "id": g.get("id") or g.get("email"),
+                "name": g.get("name") or (g.get("email") or "").split("@")[0],
+                "email": g.get("email"),
+                "profile_picture_url": g.get("picture"),
+                "provider": "google",
+            }
+
+        else:
+            client_id = os.environ.get("GITHUB_CLIENT_ID", "")
+            client_secret = os.environ.get("GITHUB_CLIENT_SECRET", "")
+            if not client_id or not client_secret:
+                raise HTTPException(500, "GitHub OAuth is not configured")
+
+            token_resp = requests.post(
+                "https://github.com/login/oauth/access_token",
+                data={
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                },
+                headers={"Accept": "application/json"},
+                timeout=15,
+            )
+            if token_resp.status_code != 200:
+                raise HTTPException(400, "GitHub token exchange failed")
+
+            github_access_token = token_resp.json().get("access_token")
+            if not github_access_token:
+                raise HTTPException(400, "GitHub access token missing")
+
+            user_resp = requests.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {github_access_token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=15,
+            )
+            if user_resp.status_code != 200:
+                raise HTTPException(400, "Failed to fetch GitHub user profile")
+
+            gh = user_resp.json()
+            email = gh.get("email")
+            if not email:
+                emails_resp = requests.get(
+                    "https://api.github.com/user/emails",
+                    headers={
+                        "Authorization": f"Bearer {github_access_token}",
+                        "Accept": "application/vnd.github+json",
+                    },
+                    timeout=15,
+                )
+                if emails_resp.status_code == 200:
+                    emails = emails_resp.json()
+                    primary = next((e for e in emails if e.get("primary") and e.get("verified")), None)
+                    fallback = next((e for e in emails if e.get("verified")), None)
+                    chosen = primary or fallback
+                    email = chosen.get("email") if chosen else None
+
+            if not email:
+                raise HTTPException(400, "GitHub account does not expose an email")
+
+            user_info = {
+                "id": str(gh.get("id") or email),
+                "name": gh.get("name") or gh.get("login") or email.split("@")[0],
+                "email": email,
+                "profile_picture_url": gh.get("avatar_url"),
+                "provider": "github",
+            }
+
+        if not user_info or not user_info.get("email"):
+            raise HTTPException(400, "Provider did not return a usable email")
+
+        # Best-effort user sync; auth should still work if DB is temporarily unavailable.
+        if db:
+            users_collection = db["users"]
+            payload = {
+                "name": user_info.get("name"),
+                "email": user_info.get("email"),
+                "avatar": user_info.get("profile_picture_url"),
+                "provider": user_info.get("provider"),
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            }
+            existing_user = users_collection.find_one({"email": user_info.get("email")})
+            if not existing_user:
+                payload["createdAt"] = datetime.now(timezone.utc).isoformat()
+            users_collection.update_one({"email": user_info.get("email")}, {"$set": payload}, upsert=True)
+
+        jwt_secret = os.environ.get("JWT_SECRET", "deviq_dev_secret_change_me")
+        app_token = jwt.encode(
+            {
+                "sub": user_info.get("email"),
+                "email": user_info.get("email"),
+                "provider": user_info.get("provider"),
+                "exp": datetime.now(timezone.utc) + timedelta(days=7),
+            },
+            jwt_secret,
+            algorithm="HS256",
         )
-        
-        print(f"OAuth profile synced for {email}")
 
-        # Retrieve and return user data
-        user_doc = users_collection.find_one({"email": email})
-
-        if not user_doc:
-            print("OAuth profile write verification failed")
-            raise HTTPException(500, "Could not verify user was created")
-
-        # Remove MongoDB ID from response for cleaner JSON
-        user_data = dict(user_doc)
-        user_data.pop("_id", None)
-        print("OAuth endpoint completed successfully")
-        
         return {
-            "user": user_data,
-            "uid": email,
-            "message": "OAuth user synced successfully"
+            "access_token": app_token,
+            "token_type": "bearer",
+            "provider": user_info.get("provider"),
+            "user": user_info,
         }
-    
+
     except HTTPException:
         raise
+    except requests.RequestException as e:
+        raise HTTPException(502, f"OAuth provider request failed: {str(e)}")
     except Exception as e:
-        print("Unexpected error in OAuth login")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error message: {str(e)}")
-        import traceback
-        print(traceback.format_exc())
         raise HTTPException(500, f"OAuth sync failed: {str(e)}")
 
 
