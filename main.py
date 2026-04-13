@@ -291,7 +291,7 @@ async def oauth_login(data: OAuthUserData):
             raise HTTPException(400, "Provider did not return a usable email")
 
         # Best-effort user sync; auth should still work if DB is temporarily unavailable.
-        if db:
+        if db is not None:
             users_collection = db["users"]
             payload = {
                 "name": user_info.get("name"),
@@ -386,7 +386,7 @@ def codeforces_analyze(username: str):
 @app.get("/auth/me")
 async def me(authorization: Optional[str] = Header(None)):
     """Get current authenticated user profile"""
-    if not db:
+    if db is None:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await verify_firebase_token(authorization)
@@ -407,7 +407,7 @@ def logout():
 @app.delete("/auth/account")
 async def delete_account(authorization: Optional[str] = Header(None)):
     """Delete authenticated user account"""
-    if not db:
+    if db is None:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await verify_firebase_token(authorization)
@@ -424,7 +424,7 @@ async def get_profile(
     x_user_email: Optional[str] = Header(None),
 ):
     """Get user's portfolio profile data"""
-    if not db:
+    if db is None:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -443,7 +443,7 @@ async def set_profile(
     x_user_email: Optional[str] = Header(None),
 ):
     """Update user's portfolio profile data"""
-    if not db:
+    if db is None:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -470,7 +470,7 @@ async def sync_profile(
     x_user_email: Optional[str] = Header(None),
 ):
     """Sync user profile data to backend (supports token or email fallback)"""
-    if not db:
+    if db is None:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -501,7 +501,7 @@ async def save_profile_picture(
     x_user_email: Optional[str] = Header(None),
 ):
     """Save user's profile picture URL"""
-    if not db:
+    if db is None:
         raise HTTPException(500, "MongoDB not configured")
     
     uid = await resolve_uid(authorization, x_user_email)
@@ -536,7 +536,7 @@ async def get_connected_accounts(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None),
 ):
-    if not db:
+    if db is None:
         raise HTTPException(500, "Firebase not configured")
 
     uid = await resolve_uid(authorization, x_user_email)
@@ -570,7 +570,7 @@ async def connect_account(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None),
 ):
-    if not db:
+    if db is None:
         raise HTTPException(500, "Firebase not configured")
 
     normalized_platform = platform.strip().lower()
@@ -626,7 +626,7 @@ async def disconnect_account(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None),
 ):
-    if not db:
+    if db is None:
         raise HTTPException(500, "Firebase not configured")
 
     normalized_platform = platform.strip().lower()
