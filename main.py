@@ -4,6 +4,10 @@ import pymongo
 from pymongo import MongoClient
 import requests
 import jwt
+try:
+    from groq import Groq
+except Exception:
+    Groq = None
 
 # Load environment variables from .env file
 load_dotenv()
@@ -105,6 +109,8 @@ async def ai_insights(
     groq_api_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_api_key:
         raise HTTPException(500, "Groq API key not configured")
+    if Groq is None:
+        raise HTTPException(500, "Groq SDK is not installed on the server")
     
     try:
         client = Groq(api_key=groq_api_key)
@@ -350,6 +356,114 @@ def analyze(username: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch GitHub data: {str(e)}")
+
+
+@app.get("/contributions/{username}")
+def github_contributions(username: str):
+    """Fetch GitHub contribution calendar and streak stats for a user."""
+    empty = {
+        "contributions": [],
+        "total_last_year": 0,
+        "current_streak": 0,
+        "longest_streak": 0,
+    }
+
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return {**empty, "error": "GITHUB_TOKEN is not configured"}
+
+    query = """
+    query($login:String!){
+      user(login:$login){
+        contributionsCollection{
+          contributionCalendar{
+            totalContributions
+            weeks{
+              contributionDays{
+                date
+                contributionCount
+                contributionLevel
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    level_map = {
+        "NONE": 0,
+        "FIRST_QUARTILE": 1,
+        "SECOND_QUARTILE": 2,
+        "THIRD_QUARTILE": 3,
+        "FOURTH_QUARTILE": 4,
+    }
+
+    try:
+        resp = requests.post(
+            "https://api.github.com/graphql",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+                "User-Agent": "DevIQ/1.0",
+            },
+            json={"query": query, "variables": {"login": username}},
+            timeout=20,
+        )
+
+        if resp.status_code != 200:
+            return {**empty, "error": f"GitHub API {resp.status_code}"}
+
+        body = resp.json()
+        if body.get("errors"):
+            return {**empty, "error": body["errors"][0].get("message", "GitHub GraphQL error")}
+
+        user = (body.get("data") or {}).get("user")
+        if not user:
+            return {**empty, "error": f"User '{username}' not found"}
+
+        calendar = user["contributionsCollection"]["contributionCalendar"]
+        contributions = []
+        for week in calendar.get("weeks", []):
+            for day in week.get("contributionDays", []):
+                contributions.append(
+                    {
+                        "date": day.get("date"),
+                        "count": int(day.get("contributionCount", 0)),
+                        "level": level_map.get(day.get("contributionLevel", "NONE"), 0),
+                    }
+                )
+
+        contributions.sort(key=lambda d: d["date"])
+
+        longest = 0
+        temp = 0
+        for d in contributions:
+            if d["count"] > 0:
+                temp += 1
+                longest = max(longest, temp)
+            else:
+                temp = 0
+
+        current = 0
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        days_for_streak = contributions
+        if contributions and contributions[-1]["date"] == today and contributions[-1]["count"] == 0:
+            days_for_streak = contributions[:-1]
+
+        for d in reversed(days_for_streak):
+            if d["count"] > 0:
+                current += 1
+            else:
+                break
+
+        return {
+            "contributions": contributions,
+            "total_last_year": int(calendar.get("totalContributions", 0)),
+            "current_streak": current,
+            "longest_streak": longest,
+        }
+    except Exception as e:
+        return {**empty, "error": str(e)}
 
 @app.get("/leetcode/{username}")
 def leetcode_analyze(username: str):
