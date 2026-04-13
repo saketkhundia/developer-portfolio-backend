@@ -577,14 +577,15 @@ async def get_connected_accounts(
     x_user_email: Optional[str] = Header(None),
 ):
     if db is None:
-        raise HTTPException(500, "Firebase not configured")
+        raise HTTPException(500, "MongoDB not configured")
 
     uid = await resolve_uid(authorization, x_user_email)
-    user_doc = db.collection("users").document(uid).get()
-    if not user_doc.exists:
+    users_collection = db["users"]
+    user_doc = users_collection.find_one({"email": uid})
+    if not user_doc:
         return {"accounts": []}
 
-    user_data = user_doc.to_dict() or {}
+    user_data = user_doc or {}
     connected_map = user_data.get("connected_accounts", {})
     if not isinstance(connected_map, dict):
         return {"accounts": []}
@@ -611,7 +612,7 @@ async def connect_account(
     x_user_email: Optional[str] = Header(None),
 ):
     if db is None:
-        raise HTTPException(500, "Firebase not configured")
+        raise HTTPException(500, "MongoDB not configured")
 
     normalized_platform = platform.strip().lower()
     if normalized_platform not in {"github", "leetcode", "codeforces"}:
@@ -633,10 +634,11 @@ async def connect_account(
     now = _iso_now()
     
     # Get current user document
-    user_doc = db.collection("users").document(uid).get()
+    users_collection = db["users"]
+    user_doc = users_collection.find_one({"email": uid})
     current_accounts = {}
-    if user_doc.exists:
-        current_accounts = user_doc.to_dict().get("connected_accounts", {}) or {}
+    if user_doc:
+        current_accounts = user_doc.get("connected_accounts", {}) or {}
     
     # Update the specific platform account
     current_accounts[normalized_platform] = {
@@ -648,10 +650,16 @@ async def connect_account(
     }
     
     # Save properly nested structure
-    db.collection("users").document(uid).set({
-        "connected_accounts": current_accounts,
-        "updatedAt": firestore.SERVER_TIMESTAMP
-    }, merge=True)
+    users_collection.update_one(
+        {"email": uid},
+        {
+            "$set": {
+                "connected_accounts": current_accounts,
+                "updatedAt": datetime.now(timezone.utc).isoformat()
+            }
+        },
+        upsert=True
+    )
 
     return {
         "ok": True,
@@ -667,7 +675,7 @@ async def disconnect_account(
     x_user_email: Optional[str] = Header(None),
 ):
     if db is None:
-        raise HTTPException(500, "Firebase not configured")
+        raise HTTPException(500, "MongoDB not configured")
 
     normalized_platform = platform.strip().lower()
     if normalized_platform not in {"github", "leetcode", "codeforces"}:
@@ -677,10 +685,11 @@ async def disconnect_account(
     now = _iso_now()
     
     # Get current user document
-    user_doc = db.collection("users").document(uid).get()
+    users_collection = db["users"]
+    user_doc = users_collection.find_one({"email": uid})
     current_accounts = {}
-    if user_doc.exists:
-        current_accounts = user_doc.to_dict().get("connected_accounts", {}) or {}
+    if user_doc:
+        current_accounts = user_doc.get("connected_accounts", {}) or {}
     
     # Mark the platform account as inactive
     if normalized_platform in current_accounts:
@@ -688,10 +697,16 @@ async def disconnect_account(
         current_accounts[normalized_platform]["last_synced_at"] = now
     
     # Save properly nested structure
-    db.collection("users").document(uid).set({
-        "connected_accounts": current_accounts,
-        "updatedAt": firestore.SERVER_TIMESTAMP
-    }, merge=True)
+    users_collection.update_one(
+        {"email": uid},
+        {
+            "$set": {
+                "connected_accounts": current_accounts,
+                "updatedAt": datetime.now(timezone.utc).isoformat()
+            }
+        },
+        upsert=True
+    )
 
     return {"ok": True, "platform": normalized_platform}
 
