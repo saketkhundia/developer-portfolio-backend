@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import requests
 
 # Initialize MongoDB
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
@@ -71,7 +72,111 @@ class OAuthUserData(BaseModel):
     avatar: Optional[str] = None
     profile_picture_url: Optional[str] = None
     provider: Optional[str] = "google"
+    code: Optional[str] = None
+    redirect_uri: Optional[str] = None
     user: Optional[Dict[str, Any]] = None
+
+
+def _exchange_google_code(code: str, redirect_uri: str) -> Dict[str, Any]:
+    client_id = os.environ.get("GOOGLE_CLIENT_ID") or os.environ.get("NEXT_PUBLIC_GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise HTTPException(500, "Google OAuth is not configured")
+
+    token_resp = requests.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": redirect_uri,
+        },
+        timeout=15,
+    )
+    if token_resp.status_code >= 400:
+        raise HTTPException(400, f"Google token exchange failed: {token_resp.text[:180]}")
+
+    access_token = token_resp.json().get("access_token")
+    if not access_token:
+        raise HTTPException(400, "Google token exchange returned no access token")
+
+    profile_resp = requests.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15,
+    )
+    if profile_resp.status_code >= 400:
+        raise HTTPException(400, f"Google user fetch failed: {profile_resp.text[:180]}")
+
+    profile = profile_resp.json()
+    return {
+        "name": profile.get("name") or profile.get("given_name") or "User",
+        "email": profile.get("email"),
+        "avatar": profile.get("picture"),
+    }
+
+
+def _exchange_github_code(code: str, redirect_uri: str) -> Dict[str, Any]:
+    client_id = os.environ.get("GITHUB_CLIENT_ID") or os.environ.get("NEXT_PUBLIC_GITHUB_CLIENT_ID")
+    client_secret = os.environ.get("GITHUB_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise HTTPException(500, "GitHub OAuth is not configured")
+
+    token_resp = requests.post(
+        "https://github.com/login/oauth/access_token",
+        headers={"Accept": "application/json"},
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+        },
+        timeout=15,
+    )
+    if token_resp.status_code >= 400:
+        raise HTTPException(400, f"GitHub token exchange failed: {token_resp.text[:180]}")
+
+    access_token = token_resp.json().get("access_token")
+    if not access_token:
+        raise HTTPException(400, "GitHub token exchange returned no access token")
+
+    user_resp = requests.get(
+        "https://api.github.com/user",
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "DevIQ-Backend",
+        },
+        timeout=15,
+    )
+    if user_resp.status_code >= 400:
+        raise HTTPException(400, f"GitHub user fetch failed: {user_resp.text[:180]}")
+
+    user_data = user_resp.json()
+    email = user_data.get("email")
+    if not email:
+        email_resp = requests.get(
+            "https://api.github.com/user/emails",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "DevIQ-Backend",
+            },
+            timeout=15,
+        )
+        if email_resp.status_code < 400:
+            emails = email_resp.json() or []
+            primary = next((e for e in emails if e.get("primary")), None)
+            fallback = next((e for e in emails if e.get("verified")), None)
+            picked = primary or fallback or (emails[0] if emails else None)
+            email = picked.get("email") if isinstance(picked, dict) else None
+
+    return {
+        "name": user_data.get("name") or user_data.get("login") or "GitHub User",
+        "email": email,
+        "avatar": user_data.get("avatar_url"),
+    }
 
 
 class ConnectAccountBody(BaseModel):
@@ -171,6 +276,23 @@ async def oauth_login(data: OAuthUserData):
         name = name or data.user.get("name")
         email = email or data.user.get("email")
         avatar = avatar or data.user.get("picture")
+
+    # OAuth code-based flow (used by frontend callback route)
+    if data.code:
+        redirect_uri = (data.redirect_uri or "").strip()
+        if not redirect_uri:
+            raise HTTPException(400, "redirect_uri is required for OAuth code exchange")
+
+        if provider == "google":
+            exchanged = _exchange_google_code(data.code, redirect_uri)
+        elif provider == "github":
+            exchanged = _exchange_github_code(data.code, redirect_uri)
+        else:
+            raise HTTPException(400, f"Unsupported OAuth provider: {provider}")
+
+        name = exchanged.get("name") or name
+        email = exchanged.get("email") or email
+        avatar = exchanged.get("avatar") or avatar
     
     print("OAuth request received")
     print(f"Parsed payload: name={name}, email={email}, provider={provider}")
@@ -224,6 +346,7 @@ async def oauth_login(data: OAuthUserData):
         return {
             "user": user_data,
             "uid": email,
+            "access_token": email,
             "message": "OAuth user synced successfully"
         }
     
