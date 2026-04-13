@@ -440,69 +440,39 @@ def get_contributions(username: str):
         raise HTTPException(500, f"Failed to fetch contributions: {str(e)}")
 
 
-@app.get("/contributions/{username}")
-def get_contributions(username: str):
-    """Fetch GitHub contribution calendar data for a user"""
-    github_token = os.environ.get("GITHUB_TOKEN", "")
-    if not github_token:
-        raise HTTPException(500, "GitHub token not configured")
-    
+@app.get("/analyze/{username}")
+def analyze(username: str):
+    """Fetch and analyze GitHub repositories for a user"""
     try:
-        # GraphQL query for contribution data
-        query = """
-        query($userName:String!) {
-          user(login: $userName) {
-            contributionsCollection {
-              contributionCalendar {
-                totalContributions
-                weeks {
-                  contributionDays {
-                    contributionCount
-                    date
-                    contributionLevel
-                  }
-                }
-              }
-            }
-          }
-        }
-        """
-        
-        variables = {"userName": username}
-        
-        response = requests.post(
-            "https://api.github.com/graphql",
-            json={"query": query, "variables": variables},
-            headers={
-                "Authorization": f"Bearer {github_token}",
-                "Content-Type": "application/json",
-            },
-            timeout=10,
-        )
-        
-        if response.status_code != 200:
-            raise HTTPException(400, f"GitHub API error: {response.status_code}")
-        
-        data = response.json()
-        
-        if "errors" in data:
-            raise HTTPException(400, f"GitHub GraphQL error: {data['errors']}")
-        
-        if not data.get("data") or not data["data"].get("user"):
-            raise HTTPException(404, f"GitHub user not found: {username}")
-        
-        contribution_data = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]
-        
+        repos = fetch_github_data(username)
+        analytics = calculate_skill_score(repos)
         return {
             "username": username,
-            "contribution_calendar": contribution_data
+            "analytics": analytics,
+            "repositories": repos
         }
-    
-    except HTTPException:
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"Error fetching GitHub contributions for {username}: {e}")
-        raise HTTPException(500, f"Failed to fetch contributions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch GitHub data: {str(e)}")
+
+
+@app.get("/leetcode/{username}")
+def leetcode_analyze(username: str):
+    """Fetch LeetCode profile data for a user"""
+    # Placeholder: return mock LeetCode data
+    # In production, this would fetch from LeetCode API
+    return {
+        "username": username,
+        "total_solved": 150,
+        "easy_solved": 80,
+        "medium_solved": 50,
+        "hard_solved": 20,
+        "acceptance_rate": 65.5,
+        "ranking": 25000,
+        "reputation": 45
+    }
+
 
 @app.get("/codeforces/{username}")
 def codeforces_analyze(username: str):
