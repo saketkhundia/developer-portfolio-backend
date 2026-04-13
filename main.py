@@ -434,7 +434,14 @@ def get_contributions(username: str):
         calendar = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]
         
         # Transform contribution_calendar into expected format
-        level_map = {"NONE": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "VERY_HIGH": 4}
+        # GitHub returns: NONE, FIRST_QUARTILE, SECOND_QUARTILE, THIRD_QUARTILE, FOURTH_QUARTILE
+        level_map = {
+            "NONE": 0,
+            "FIRST_QUARTILE": 1,
+            "SECOND_QUARTILE": 2,
+            "THIRD_QUARTILE": 3,
+            "FOURTH_QUARTILE": 4
+        }
         contributions = []
         
         for week in calendar.get("weeks", []):
