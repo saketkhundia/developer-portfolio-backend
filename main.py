@@ -434,23 +434,44 @@ def get_contributions(username: str):
         calendar = data["data"]["user"]["contributionsCollection"]["contributionCalendar"]
         
         # Transform contribution_calendar into expected format
-        # GitHub returns: NONE, FIRST_QUARTILE, SECOND_QUARTILE, THIRD_QUARTILE, FOURTH_QUARTILE
-        level_map = {
-            "NONE": 0,
-            "FIRST_QUARTILE": 1,
-            "SECOND_QUARTILE": 2,
-            "THIRD_QUARTILE": 3,
-            "FOURTH_QUARTILE": 4
-        }
-        contributions = []
+        contributions_raw = []
         
         for week in calendar.get("weeks", []):
             for day in week.get("contributionDays", []):
-                contributions.append({
+                contributions_raw.append({
                     "date": day["date"],
-                    "count": day["contributionCount"],
-                    "level": level_map.get(day.get("contributionLevel", "NONE"), 0)
+                    "count": day["contributionCount"]
                 })
+        
+        # Calculate level based on count quartiles (more reliable than GitHub's API response)
+        if not contributions_raw:
+            contributions = []
+        else:
+            counts = sorted([c["count"] for c in contributions_raw if c["count"] > 0])
+            if not counts:
+                contributions = [{"date": c["date"], "count": 0, "level": 0} for c in contributions_raw]
+            else:
+                q1 = counts[len(counts) // 4]
+                q2 = counts[len(counts) // 2]
+                q3 = counts[3 * len(counts) // 4]
+                
+                contributions = []
+                for c in contributions_raw:
+                    if c["count"] == 0:
+                        level = 0
+                    elif c["count"] <= q1:
+                        level = 1
+                    elif c["count"] <= q2:
+                        level = 2
+                    elif c["count"] <= q3:
+                        level = 3
+                    else:
+                        level = 4
+                    contributions.append({
+                        "date": c["date"],
+                        "count": c["count"],
+                        "level": level
+                    })
         
         # Calculate streaks and busiest day
         current_streak = 0
