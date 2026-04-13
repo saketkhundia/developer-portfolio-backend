@@ -481,18 +481,71 @@ def leetcode_analyze(username: str):
 
 @app.get("/codeforces/{username}")
 def codeforces_analyze(username: str):
-    """Fetch Codeforces profile data for a user"""
-    # Placeholder: return mock Codeforces data
-    # In production, this would fetch from Codeforces API
-    return {
-        "username": username,
-        "rating": 1400,
-        "max_rating": 1500,
-        "rank": "Expert",
-        "max_rank": "Expert",
-        "problems_solved": 250,
-        "contest_count": 20
-    }
+    """Fetch real Codeforces profile data for a user."""
+    try:
+        # 1) User profile and rating/rank info
+        info_resp = requests.get(
+            "https://codeforces.com/api/user.info",
+            params={"handles": username},
+            timeout=15,
+        )
+        if info_resp.status_code != 200:
+            raise HTTPException(400, f"Codeforces API error: {info_resp.status_code}")
+
+        info_data = info_resp.json()
+        if info_data.get("status") != "OK" or not info_data.get("result"):
+            raise HTTPException(404, f"Codeforces user not found: {username}")
+
+        user = info_data["result"][0]
+
+        # 2) Contest history (used for contests participated)
+        rating_resp = requests.get(
+            "https://codeforces.com/api/user.rating",
+            params={"handle": username},
+            timeout=15,
+        )
+        contests_participated = 0
+        if rating_resp.status_code == 200:
+            rating_data = rating_resp.json()
+            if rating_data.get("status") == "OK" and isinstance(rating_data.get("result"), list):
+                contests_participated = len(rating_data["result"])
+
+        # 3) Approximate solved problems from accepted submissions
+        # Count unique accepted problems by contestId + index
+        solved_count = 0
+        status_resp = requests.get(
+            "https://codeforces.com/api/user.status",
+            params={"handle": username, "from": 1, "count": 10000},
+            timeout=20,
+        )
+        if status_resp.status_code == 200:
+            status_data = status_resp.json()
+            if status_data.get("status") == "OK" and isinstance(status_data.get("result"), list):
+                solved = set()
+                for sub in status_data["result"]:
+                    if sub.get("verdict") != "OK":
+                        continue
+                    problem = sub.get("problem") or {}
+                    cid = problem.get("contestId")
+                    idx = problem.get("index")
+                    if cid is not None and idx:
+                        solved.add(f"{cid}-{idx}")
+                solved_count = len(solved)
+
+        return {
+            "username": user.get("handle", username),
+            "rating": user.get("rating", 0),
+            "max_rating": user.get("maxRating", 0),
+            "rank": user.get("rank", "unrated"),
+            "max_rank": user.get("maxRank", "unrated"),
+            "problems_solved": solved_count,
+            "contests_participated": contests_participated,
+            "contribution": user.get("contribution", 0),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to fetch Codeforces data: {str(e)}")
 
 
 # ─────────────────────────────────────────────────
