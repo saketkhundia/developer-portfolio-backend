@@ -550,6 +550,77 @@ def leetcode_analyze(username: str):
     }
 
 
+# Mock company problems data (represents LeetCode company-specific problems)
+COMPANY_PROBLEMS_DB = {
+    "google": {
+        "company": "Google",
+        "slug": "google",
+        "total_problems": 342,
+        "last_updated": "2026-04-13",
+        "problems": [
+            {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 95, "url": "https://leetcode.com/problems/two-sum/"},
+            {"id": "2", "title": "Add Two Numbers", "slug": "add-two-numbers", "difficulty": "Medium", "topicTags": ["Linked List", "Math"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/add-two-numbers/"},
+            {"id": "3", "title": "Longest Substring Without Repeating Characters", "slug": "longest-substring-without-repeating-characters", "difficulty": "Medium", "topicTags": ["Hash Table", "String", "Sliding Window"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/longest-substring-without-repeating-characters/"},
+            {"id": "4", "title": "Median of Two Sorted Arrays", "slug": "median-of-two-sorted-arrays", "difficulty": "Hard", "topicTags": ["Array", "Binary Search", "Divide and Conquer"], "paidOnly": False, "frequency": 78, "url": "https://leetcode.com/problems/median-of-two-sorted-arrays/"},
+        ]
+    },
+    "amazon": {
+        "company": "Amazon",
+        "slug": "amazon",
+        "total_problems": 287,
+        "last_updated": "2026-04-13",
+        "problems": [
+            {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/two-sum/"},
+            {"id": "5", "title": "Longest Palindromic Substring", "slug": "longest-palindromic-substring", "difficulty": "Medium", "topicTags": ["String", "Dynamic Programming"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/longest-palindromic-substring/"},
+            {"id": "7", "title": "Reverse Integer", "slug": "reverse-integer", "difficulty": "Easy", "topicTags": ["Math"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/reverse-integer/"},
+            {"id": "8", "title": "String to Integer (atoi)", "slug": "string-to-integer-atoi", "difficulty": "Medium", "topicTags": ["String"], "paidOnly": False, "frequency": 75, "url": "https://leetcode.com/problems/string-to-integer-atoi/"},
+        ]
+    },
+    "meta": {
+        "company": "Meta",
+        "slug": "meta",
+        "total_problems": 256,
+        "last_updated": "2026-04-13",
+        "problems": [
+            {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/two-sum/"},
+            {"id": "22", "title": "Generate Parentheses", "slug": "generate-parentheses", "difficulty": "Medium", "topicTags": ["String", "Backtracking"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/generate-parentheses/"},
+            {"id": "33", "title": "Search in Rotated Sorted Array", "slug": "search-in-rotated-sorted-array", "difficulty": "Medium", "topicTags": ["Array", "Binary Search"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/search-in-rotated-sorted-array/"},
+        ]
+    },
+    "microsoft": {
+        "company": "Microsoft",
+        "slug": "microsoft",
+        "total_problems": 298,
+        "last_updated": "2026-04-13",
+        "problems": [
+            {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/two-sum/"},
+            {"id": "9", "title": "Palindrome Number", "slug": "palindrome-number", "difficulty": "Easy", "topicTags": ["Math"], "paidOnly": False, "frequency": 77, "url": "https://leetcode.com/problems/palindrome-number/"},
+            {"id": "15", "title": "3Sum", "slug": "3sum", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/3sum/"},
+        ]
+    },
+    "apple": {
+        "company": "Apple",
+        "slug": "apple",
+        "total_problems": 215,
+        "last_updated": "2026-04-13",
+        "problems": [
+            {"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/two-sum/"},
+            {"id": "11", "title": "Container With Most Water", "slug": "container-with-most-water", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers", "Greedy"], "paidOnly": False, "frequency": 79, "url": "https://leetcode.com/problems/container-with-most-water/"},
+        ]
+    }
+}
+
+
+@app.get("/leetcode/company-problems/{slug}")
+def get_company_problems(slug: str):
+    """Fetch LeetCode problems for a specific company"""
+    slug_lower = slug.lower()
+    if slug_lower not in COMPANY_PROBLEMS_DB:
+        raise HTTPException(404, f"Company '{slug}' not found")
+    
+    return COMPANY_PROBLEMS_DB[slug_lower]
+
+
 @app.get("/codeforces/{username}")
 def codeforces_analyze(username: str):
     """Fetch real Codeforces profile data for a user."""
