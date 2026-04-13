@@ -550,47 +550,93 @@ def leetcode_analyze(username: str):
     }
 
 
-# Mock company problems data (represents LeetCode company-specific problems)
-COMPANY_PROBLEMS_DB = {
-    "google": {"company": "Google", "slug": "google", "total_problems": 342, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array", "Hash Table"], "paidOnly": False, "frequency": 95, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "2", "title": "Add Two Numbers", "slug": "add-two-numbers", "difficulty": "Medium", "topicTags": ["Linked List", "Math"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/add-two-numbers/"}, {"id": "3", "title": "Longest Substring", "slug": "longest-substring", "difficulty": "Medium", "topicTags": ["String", "Sliding Window"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/longest-substring/"}, {"id": "4", "title": "Median of Two Sorted Arrays", "slug": "median-sorted", "difficulty": "Hard", "topicTags": ["Array", "Binary Search"], "paidOnly": False, "frequency": 78, "url": "https://leetcode.com/problems/median-sorted/"}]},
-    "amazon": {"company": "Amazon", "slug": "amazon", "total_problems": 287, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 90, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "15", "title": "3Sum", "slug": "3sum", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/3sum/"}, {"id": "23", "title": "Merge k Sorted Lists", "slug": "merge-k-lists", "difficulty": "Hard", "topicTags": ["Linked List", "Heap"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/merge-k-lists/"}]},
-    "meta": {"company": "Meta", "slug": "meta", "total_problems": 256, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 92, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "22", "title": "Generate Parentheses", "slug": "generate-parentheses", "difficulty": "Medium", "topicTags": ["String", "Backtracking"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/generate-parentheses/"}, {"id": "33", "title": "Search in Rotated Array", "slug": "search-rotated", "difficulty": "Medium", "topicTags": ["Array", "Binary Search"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/search-rotated/"}]},
-    "apple": {"company": "Apple", "slug": "apple", "total_problems": 215, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 85, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "121", "title": "Best Time to Buy Stock", "slug": "best-buy-stock", "difficulty": "Easy", "topicTags": ["Array", "DP"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/best-buy-stock/"}, {"id": "124", "title": "Binary Tree Max Path Sum", "slug": "max-path-sum", "difficulty": "Hard", "topicTags": ["Tree", "DFS"], "paidOnly": False, "frequency": 79, "url": "https://leetcode.com/problems/max-path-sum/"}]},
-    "netflix": {"company": "Netflix", "slug": "netflix", "total_problems": 198, "last_updated": "2026-04-13", "problems": [{"id": "2", "title": "Add Two Numbers", "slug": "add-two-numbers", "difficulty": "Medium", "topicTags": ["Linked List"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/add-two-numbers/"}, {"id": "5", "title": "Longest Palindromic", "slug": "longest-palindromic", "difficulty": "Medium", "topicTags": ["String", "DP"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/longest-palindromic/"}, {"id": "25", "title": "Reverse Nodes k Group", "slug": "reverse-k-group", "difficulty": "Hard", "topicTags": ["Linked List"], "paidOnly": False, "frequency": 76, "url": "https://leetcode.com/problems/reverse-k-group/"}]},
-    "microsoft": {"company": "Microsoft", "slug": "microsoft", "total_problems": 298, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 88, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "9", "title": "Palindrome Number", "slug": "palindrome-number", "difficulty": "Easy", "topicTags": ["Math"], "paidOnly": False, "frequency": 77, "url": "https://leetcode.com/problems/palindrome-number/"}, {"id": "10", "title": "Regular Expression", "slug": "regex", "difficulty": "Hard", "topicTags": ["String", "DP"], "paidOnly": True, "frequency": 74, "url": "https://leetcode.com/problems/regex/"}]},
-    "bloomberg": {"company": "Bloomberg", "slug": "bloomberg", "total_problems": 267, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 87, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "11", "title": "Container Most Water", "slug": "container", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/container/"}, {"id": "41", "title": "First Missing Positive", "slug": "missing-positive", "difficulty": "Hard", "topicTags": ["Array"], "paidOnly": False, "frequency": 75, "url": "https://leetcode.com/problems/missing-positive/"}]},
-    "goldman-sachs": {"company": "Goldman Sachs", "slug": "goldman-sachs", "total_problems": 234, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 84, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "7", "title": "Reverse Integer", "slug": "reverse-integer", "difficulty": "Easy", "topicTags": ["Math"], "paidOnly": False, "frequency": 78, "url": "https://leetcode.com/problems/reverse-integer/"}, {"id": "12", "title": "Integer to Roman", "slug": "int-to-roman", "difficulty": "Medium", "topicTags": ["String", "Math"], "paidOnly": False, "frequency": 72, "url": "https://leetcode.com/problems/int-to-roman/"}]},
-    "uber": {"company": "Uber", "slug": "uber", "total_problems": 245, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 91, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "127", "title": "Word Ladder", "slug": "word-ladder", "difficulty": "Hard", "topicTags": ["BFS", "Graph"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/word-ladder/"}, {"id": "210", "title": "Course Schedule II", "slug": "course-schedule", "difficulty": "Medium", "topicTags": ["Graph", "Topological Sort"], "paidOnly": False, "frequency": 77, "url": "https://leetcode.com/problems/course-schedule/"}]},
-    "linkedin": {"company": "LinkedIn", "slug": "linkedin", "total_problems": 267, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 89, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "18", "title": "4Sum", "slug": "4sum", "difficulty": "Medium", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 76, "url": "https://leetcode.com/problems/4sum/"}, {"id": "146", "title": "LRU Cache", "slug": "lru-cache", "difficulty": "Medium", "topicTags": ["Hash Table", "Linked List"], "paidOnly": True, "frequency": 85, "url": "https://leetcode.com/problems/lru-cache/"}]},
-    "adobe": {"company": "Adobe", "slug": "adobe", "total_problems": 212, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "5", "title": "Longest Palindromic", "slug": "longest-palindromic", "difficulty": "Medium", "topicTags": ["String", "DP"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/longest-palindromic/"}, {"id": "72", "title": "Edit Distance", "slug": "edit-distance", "difficulty": "Hard", "topicTags": ["String", "DP"], "paidOnly": True, "frequency": 78, "url": "https://leetcode.com/problems/edit-distance/"}]},
-    "oracle": {"company": "Oracle", "slug": "oracle", "total_problems": 198, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "6", "title": "Zigzag Conversion", "slug": "zigzag", "difficulty": "Medium", "topicTags": ["String"], "paidOnly": False, "frequency": 65, "url": "https://leetcode.com/problems/zigzag/"}, {"id": "42", "title": "Trapping Rain Water", "slug": "trapping-water", "difficulty": "Hard", "topicTags": ["Array", "Stack"], "paidOnly": False, "frequency": 79, "url": "https://leetcode.com/problems/trapping-water/"}]},
-    "salesforce": {"company": "Salesforce", "slug": "salesforce", "total_problems": 201, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "28", "title": "Find First Occurrence", "slug": "find-first", "difficulty": "Easy", "topicTags": ["String", "Two Pointers"], "paidOnly": False, "frequency": 68, "url": "https://leetcode.com/problems/find-first/"}, {"id": "36", "title": "Valid Sudoku", "slug": "valid-sudoku", "difficulty": "Medium", "topicTags": ["Hash Table", "Matrix"], "paidOnly": False, "frequency": 73, "url": "https://leetcode.com/problems/valid-sudoku/"}]},
-    "twitter": {"company": "Twitter", "slug": "twitter", "total_problems": 219, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 86, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "20", "title": "Valid Parentheses", "slug": "valid-parens", "difficulty": "Easy", "topicTags": ["String", "Stack"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/valid-parens/"}, {"id": "38", "title": "Count and Say", "slug": "count-say", "difficulty": "Medium", "topicTags": ["String"], "paidOnly": False, "frequency": 62, "url": "https://leetcode.com/problems/count-say/"}]},
-    "spotify": {"company": "Spotify", "slug": "spotify", "total_problems": 167, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 79, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "3", "title": "Longest Substring", "slug": "longest-substring", "difficulty": "Medium", "topicTags": ["String", "Sliding Window"], "paidOnly": False, "frequency": 75, "url": "https://leetcode.com/problems/longest-substring/"}, {"id": "101", "title": "Symmetric Tree", "slug": "symmetric-tree", "difficulty": "Easy", "topicTags": ["Tree", "DFS"], "paidOnly": False, "frequency": 68, "url": "https://leetcode.com/problems/symmetric-tree/"}]},
-    "stripe": {"company": "Stripe", "slug": "stripe", "total_problems": 189, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 80, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "13", "title": "Roman to Integer", "slug": "roman-int", "difficulty": "Easy", "topicTags": ["String", "Hash Table"], "paidOnly": False, "frequency": 71, "url": "https://leetcode.com/problems/roman-int/"}, {"id": "17", "title": "Letter Combinations", "slug": "letter-combo", "difficulty": "Medium", "topicTags": ["String", "Backtracking"], "paidOnly": False, "frequency": 74, "url": "https://leetcode.com/problems/letter-combo/"}]},
-    "airbnb": {"company": "Airbnb", "slug": "airbnb", "total_problems": 176, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 81, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "54", "title": "Spiral Matrix", "slug": "spiral-matrix", "difficulty": "Medium", "topicTags": ["Matrix"], "paidOnly": False, "frequency": 69, "url": "https://leetcode.com/problems/spiral-matrix/"}, {"id": "212", "title": "Word Search II", "slug": "word-search-2", "difficulty": "Hard", "topicTags": ["Trie", "Backtracking"], "paidOnly": True, "frequency": 72, "url": "https://leetcode.com/problems/word-search-2/"}]},
-    "snap": {"company": "Snap", "slug": "snap", "total_problems": 154, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 77, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "21", "title": "Merge Sorted Lists", "slug": "merge-sorted", "difficulty": "Easy", "topicTags": ["Linked List"], "paidOnly": False, "frequency": 66, "url": "https://leetcode.com/problems/merge-sorted/"}, {"id": "24", "title": "Swap Nodes Pairs", "slug": "swap-pairs", "difficulty": "Medium", "topicTags": ["Linked List"], "paidOnly": False, "frequency": 70, "url": "https://leetcode.com/problems/swap-pairs/"}]},
-    "tiktok": {"company": "TikTok", "slug": "tiktok", "total_problems": 192, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 83, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "739", "title": "Daily Temperatures", "slug": "daily-temps", "difficulty": "Medium", "topicTags": ["Stack", "Monotonic Stack"], "paidOnly": False, "frequency": 78, "url": "https://leetcode.com/problems/daily-temps/"}, {"id": "297", "title": "Serialize Deserialize", "slug": "serialize", "difficulty": "Hard", "topicTags": ["Tree", "Design"], "paidOnly": True, "frequency": 75, "url": "https://leetcode.com/problems/serialize/"}]},
-    "nvidia": {"company": "Nvidia", "slug": "nvidia", "total_problems": 168, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 76, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "53", "title": "Maximum Subarray", "slug": "max-subarray", "difficulty": "Medium", "topicTags": ["Array", "DP"], "paidOnly": False, "frequency": 77, "url": "https://leetcode.com/problems/max-subarray/"}, {"id": "84", "title": "Largest Rectangle", "slug": "largest-rect", "difficulty": "Hard", "topicTags": ["Stack", "Array"], "paidOnly": False, "frequency": 71, "url": "https://leetcode.com/problems/largest-rect/"}]},
-    "paypal": {"company": "PayPal", "slug": "paypal", "total_problems": 201, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 79, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "344", "title": "Reverse String", "slug": "reverse-string", "difficulty": "Easy", "topicTags": ["String", "Two Pointers"], "paidOnly": False, "frequency": 73, "url": "https://leetcode.com/problems/reverse-string/"}, {"id": "169", "title": "Majority Element", "slug": "majority", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 75, "url": "https://leetcode.com/problems/majority/"}]},
-    "cisco": {"company": "Cisco", "slug": "cisco", "total_problems": 156, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 74, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "104", "title": "Maximum Depth Tree", "slug": "max-depth", "difficulty": "Easy", "topicTags": ["Tree", "DFS"], "paidOnly": False, "frequency": 70, "url": "https://leetcode.com/problems/max-depth/"}, {"id": "129", "title": "Sum Root Leaf", "slug": "sum-root-leaf", "difficulty": "Medium", "topicTags": ["Tree", "DFS"], "paidOnly": False, "frequency": 68, "url": "https://leetcode.com/problems/sum-root-leaf/"}]},
-    "vmware": {"company": "VMware", "slug": "vmware", "total_problems": 143, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 71, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "155", "title": "Min Stack", "slug": "min-stack", "difficulty": "Easy", "topicTags": ["Stack", "Design"], "paidOnly": False, "frequency": 74, "url": "https://leetcode.com/problems/min-stack/"}, {"id": "225", "title": "Implement Queue", "slug": "queue", "difficulty": "Easy", "topicTags": ["Stack", "Design"], "paidOnly": False, "frequency": 66, "url": "https://leetcode.com/problems/queue/"}]},
-    "walmart": {"company": "Walmart", "slug": "walmart", "total_problems": 178, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 78, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "14", "title": "Longest Common Prefix", "slug": "common-prefix", "difficulty": "Easy", "topicTags": ["String"], "paidOnly": False, "frequency": 67, "url": "https://leetcode.com/problems/common-prefix/"}, {"id": "198", "title": "House Robber", "slug": "house-robber", "difficulty": "Medium", "topicTags": ["DP"], "paidOnly": False, "frequency": 76, "url": "https://leetcode.com/problems/house-robber/"}]},
-    "jpmorgan": {"company": "JPMorgan", "slug": "jpmorgan", "total_problems": 234, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 82, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "49", "title": "Group Anagrams", "slug": "group-anagrams", "difficulty": "Medium", "topicTags": ["String", "Hash Table"], "paidOnly": False, "frequency": 75, "url": "https://leetcode.com/problems/group-anagrams/"}, {"id": "76", "title": "Minimum Window", "slug": "min-window", "difficulty": "Hard", "topicTags": ["String", "Sliding Window"], "paidOnly": True, "frequency": 79, "url": "https://leetcode.com/problems/min-window/"}]},
-    "samsung": {"company": "Samsung", "slug": "samsung", "total_problems": 145, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 72, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "26", "title": "Remove Duplicates", "slug": "remove-dup", "difficulty": "Easy", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 65, "url": "https://leetcode.com/problems/remove-dup/"}, {"id": "27", "title": "Remove Element", "slug": "remove-elem", "difficulty": "Easy", "topicTags": ["Array", "Two Pointers"], "paidOnly": False, "frequency": 63, "url": "https://leetcode.com/problems/remove-elem/"}]},
-    "intuit": {"company": "Intuit", "slug": "intuit", "total_problems": 167, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 75, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "169", "title": "Majority Element", "slug": "majority", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 71, "url": "https://leetcode.com/problems/majority/"}, {"id": "189", "title": "Rotate Array", "slug": "rotate", "difficulty": "Medium", "topicTags": ["Array"], "paidOnly": False, "frequency": 69, "url": "https://leetcode.com/problems/rotate/"}]},
-    "yahoo": {"company": "Yahoo", "slug": "yahoo", "total_problems": 134, "last_updated": "2026-04-13", "problems": [{"id": "1", "title": "Two Sum", "slug": "two-sum", "difficulty": "Easy", "topicTags": ["Array"], "paidOnly": False, "frequency": 68, "url": "https://leetcode.com/problems/two-sum/"}, {"id": "191", "title": "Number Of 1 Bits", "slug": "number-1-bits", "difficulty": "Easy", "topicTags": ["Bit", "Math"], "paidOnly": False, "frequency": 62, "url": "https://leetcode.com/problems/number-1-bits/"}, {"id": "202", "title": "Happy Number", "slug": "happy-number", "difficulty": "Easy", "topicTags": ["Hash Table", "Math"], "paidOnly": False, "frequency": 64, "url": "https://leetcode.com/problems/happy-number/"}]}
-}
+def fetch_leetcode_company_problems(slug: str) -> dict:
+    """Fetch real company problems from LeetCode GraphQL API"""
+    try:
+        graphql_query = """
+        query getCompanyProblems($slug: String!, $limit: Int!) {
+            allQuestionsCount {
+                difficulty
+                total
+            }
+            companyProblems(companySlug: $slug, limit: $limit, skip: 0) {
+                problems {
+                    frontendQuestionId
+                    title
+                    titleSlug
+                    difficulty
+                    topicTags {
+                        slug
+                        name
+                    }
+                    isPaidOnly
+                    frequency
+                }
+                total
+            }
+            companyInfo {
+                name
+                slug
+            }
+        }
+        """
+        response = requests.post(
+            "https://leetcode.com/graphql",
+            json={"query": graphql_query, "variables": {"slug": slug, "limit": 200}},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            },
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "data" in data and data["data"].get("companyProblems"):
+                company_info = data["data"].get("companyInfo", {})
+                problems_data = data["data"]["companyProblems"]
+                problems = problems_data.get("problems", [])
+                
+                # Transform to match expected format
+                transformed_problems = []
+                for p in problems:
+                    transformed_problems.append({
+                        "id": p.get("frontendQuestionId", ""),
+                        "title": p.get("title", ""),
+                        "slug": p.get("titleSlug", ""),
+                        "difficulty": p.get("difficulty", "Medium"),
+                        "topicTags": [tag.get("name", "") for tag in p.get("topicTags", [])],
+                        "paidOnly": p.get("isPaidOnly", False),
+                        "frequency": p.get("frequency", 0),
+                        "url": f"https://leetcode.com/problems/{p.get('titleSlug', '')}/"
+                    })
+                
+                return {
+                    "company": company_info.get("name") or slug.capitalize(),
+                    "slug": slug,
+                    "total_problems": problems_data.get("total", len(transformed_problems)),
+                    "last_updated": "2026-04-13",
+                    "problems": transformed_problems[:50]  # Return top 50 problems
+                }
+    except Exception as e:
+        print(f"Error fetching from LeetCode API for {slug}: {e}")
+    
+    return None
 
 
 @app.get("/leetcode/company-problems/{slug}")
 def get_company_problems(slug: str):
-    """Fetch LeetCode problems for a specific company"""
+    """Fetch real LeetCode problems for a specific company"""
     slug_lower = slug.lower()
-    if slug_lower not in COMPANY_PROBLEMS_DB:
-        raise HTTPException(404, f"Company '{slug}' not found")
     
-    return COMPANY_PROBLEMS_DB[slug_lower]
+    # Try to fetch real data from LeetCode API
+    company_problems = fetch_leetcode_company_problems(slug_lower)
+    
+    if company_problems:
+        return company_problems
+    
+    # If API fails, return error
+    raise HTTPException(404, f"Company '{slug}' not found or could not fetch data")
 
 
 @app.get("/codeforces/{username}")
