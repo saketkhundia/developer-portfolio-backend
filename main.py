@@ -292,18 +292,22 @@ async def oauth_login(data: OAuthUserData):
 
         # Best-effort user sync; auth should still work if DB is temporarily unavailable.
         if db is not None:
-            users_collection = db["users"]
-            payload = {
-                "name": user_info.get("name"),
-                "email": user_info.get("email"),
-                "avatar": user_info.get("profile_picture_url"),
-                "provider": user_info.get("provider"),
-                "updatedAt": datetime.now(timezone.utc).isoformat(),
-            }
-            existing_user = users_collection.find_one({"email": user_info.get("email")})
-            if not existing_user:
-                payload["createdAt"] = datetime.now(timezone.utc).isoformat()
-            users_collection.update_one({"email": user_info.get("email")}, {"$set": payload}, upsert=True)
+            try:
+                users_collection = db["users"]
+                payload = {
+                    "name": user_info.get("name"),
+                    "email": user_info.get("email"),
+                    "avatar": user_info.get("profile_picture_url"),
+                    "provider": user_info.get("provider"),
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                }
+                existing_user = users_collection.find_one({"email": user_info.get("email")})
+                if not existing_user:
+                    payload["createdAt"] = datetime.now(timezone.utc).isoformat()
+                users_collection.update_one({"email": user_info.get("email")}, {"$set": payload}, upsert=True)
+            except Exception as db_err:
+                # Do not block OAuth login on database issues.
+                print(f"⚠️ OAuth DB sync skipped: {db_err}")
 
         jwt_secret = os.environ.get("JWT_SECRET", "deviq_dev_secret_change_me")
         app_token = jwt.encode(
