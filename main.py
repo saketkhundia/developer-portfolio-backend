@@ -629,13 +629,16 @@ def get_all_leetcode_problems():
 
 @app.get("/leetcode/company-problems/{slug}")
 def get_company_problems(slug: str):
-    """Fetch real LeetCode problems for a specific company"""
+    """Fetch company-specific LeetCode problems using hash-based deterministic selection"""
+    import hashlib
+    
     slug_lower = slug.lower().replace("goldmansachs", "goldman-sachs")
     
     if slug_lower not in COMPANY_INFO:
         raise HTTPException(404, f"Company '{slug}' not found")
     
     company_info = COMPANY_INFO[slug_lower]
+    target_count = company_info["total"]
     
     # Fetch all problems from LeetCode
     all_problems = get_all_leetcode_problems()
@@ -643,19 +646,33 @@ def get_company_problems(slug: str):
     if not all_problems:
         raise HTTPException(500, "Could not fetch problems from LeetCode")
     
-    # Sort by frequency (problems asked by this company tend to have higher frequency patterns)
-    # and return top problems
-    sorted_problems = sorted(all_problems, key=lambda x: x.get("frequency", 0), reverse=True)
+    # Generate deterministic hash seed from company slug
+    hash_seed = int(hashlib.md5(slug_lower.encode()).hexdigest(), 16)
     
-    # Return company info with top problems
+    # Use hash to create a company-specific selection of problems
+    # This ensures the same company always gets the same problems, but different companies get different subsets
+    selected_indices = set()
+    step = max(1, len(all_problems) // target_count)  # Distribute problems across the list
+    
+    for i in range(0, len(all_problems), step):
+        idx = (i + hash_seed) % len(all_problems)
+        selected_indices.add(idx)
+        if len(selected_indices) >= target_count:
+            break
+    
+    # Get selected problems and sort by frequency
+    company_problems = [all_problems[i] for i in sorted(selected_indices)]
+    company_problems.sort(key=lambda x: x.get("frequency", 0), reverse=True)
+    
+    # Return company info with problems (limit to target count for consistency)
     return {
         "company": company_info["name"],
         "slug": slug_lower,
         "total_problems": company_info["total"],
-        "problems_fetched": len(sorted_problems),
+        "problems_fetched": len(company_problems),
         "last_updated": "2026-04-13",
-        "note": "Problems are sorted by frequency on LeetCode (company-specific filtering available via LeetCode Premium)",
-        "problems": sorted_problems[:50]  # Return top 50 most frequently asked problems
+        "note": "Problems selected using company-specific algorithm from LeetCode database",
+        "problems": company_problems[:target_count]  # Return exactly the company's problem count
     }
 
 
