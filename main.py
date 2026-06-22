@@ -29,6 +29,7 @@ except Exception as e:
     db = None
 
 from github import fetch_github_data
+from leetcode import fetch_leetcode_data
 from analytics import calculate_skill_score
 
 app = FastAPI()
@@ -535,19 +536,14 @@ def analyze(username: str):
 
 @app.get("/leetcode/{username}")
 def leetcode_analyze(username: str):
-    """Fetch LeetCode profile data for a user"""
-    # Placeholder: return mock LeetCode data
-    # In production, this would fetch from LeetCode API
-    return {
-        "username": username,
-        "total_solved": 150,
-        "easy_solved": 80,
-        "medium_solved": 50,
-        "hard_solved": 20,
-        "acceptance_rate": 65.5,
-        "ranking": 25000,
-        "reputation": 45
-    }
+    """Fetch real LeetCode profile data for a user via LeetCode's GraphQL API."""
+    data = fetch_leetcode_data(username)
+    if not data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"LeetCode user '{username}' not found or data unavailable",
+        )
+    return data
 
 
 # Company information mapping with real problem counts

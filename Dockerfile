@@ -9,6 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app files
 COPY main.py .
 COPY github.py .
+COPY leetcode.py .
 COPY analytics.py .
 
 # Expose port (Cloud Run uses 8080)
