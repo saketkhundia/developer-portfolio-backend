@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import requests
+from apscheduler.schedulers.background import BackgroundScheduler
+import atexit
 
 # Initialize MongoDB
 MONGODB_URI = os.environ.get("MONGODB_URI", "mongodb://localhost:27017")
@@ -50,6 +52,44 @@ app.add_middleware(
 )
 
 
+# Keep-alive mechanism to prevent Render from sleeping
+def keep_alive_ping():
+    """Ping the backend to keep it active on Render"""
+    try:
+        # Get backend URL from environment variable (Render sets RENDER_EXTERNAL_URL)
+        backend_url = os.environ.get("BACKEND_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+
+        if backend_url:
+            # Remove trailing slash if present
+            backend_url = backend_url.rstrip('/')
+            response = requests.get(f"{backend_url}/health", timeout=10)
+            print(f"✅ Keep-alive ping successful: {response.status_code} at {datetime.now()}")
+        else:
+            print(f"⚠️  Keep-alive skipped: No BACKEND_URL or RENDER_EXTERNAL_URL set")
+    except Exception as e:
+        print(f"⚠️  Keep-alive ping failed: {e}")
+
+
+# Initialize scheduler
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=keep_alive_ping, trigger="interval", minutes=14, id="keep_alive")
+
+# Start scheduler on app startup
+@app.on_event("startup")
+def startup_event():
+    scheduler.start()
+    print("✅ Keep-alive scheduler started (pings every 14 minutes)")
+
+# Shutdown scheduler on app shutdown
+@app.on_event("shutdown")
+def shutdown_event():
+    scheduler.shutdown()
+    print("⏹️  Keep-alive scheduler stopped")
+
+# Ensure scheduler shuts down on exit
+atexit.register(lambda: scheduler.shutdown() if scheduler.running else None)
+
+
 # Helper to verify Firebase token
 async def verify_firebase_token(authorization: Optional[str] = Header(None)) -> str:
     """Verify Firebase ID token and return user ID (email-based for MongoDB)"""
@@ -65,6 +105,16 @@ async def verify_firebase_token(authorization: Optional[str] = Header(None)) -> 
 @app.get("/")
 def home():
     return {"message": "Developer Portfolio Intelligence API Running"}
+
+
+@app.get("/health")
+def health_check():
+    """Health check endpoint for keep-alive pings"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "message": "Backend is active"
+    }
 
 
 class OAuthUserData(BaseModel):
