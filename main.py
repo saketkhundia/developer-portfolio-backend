@@ -271,7 +271,7 @@ async def ai_insights(
         
         # Call Groq API with llama-3.1-8b (fast, available model)
         completion = client.chat.completions.create(
-            openai/gpt-oss-120b,
+            model="openai/gpt-oss-120b",
             messages=messages,
             temperature=0.7,
             max_tokens=500,
