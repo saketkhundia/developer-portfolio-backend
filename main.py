@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 import requests
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
@@ -238,6 +239,257 @@ class ConnectAccountBody(BaseModel):
 class ChatRequest(BaseModel):
     prompt: str
     conversation_history: Optional[list] = None
+
+
+class CodeReviewRequest(BaseModel):
+    code: str
+    language: Optional[str] = "javascript"
+
+
+REVIEW_SYSTEM_PROMPT = """You are DevIQ's Senior Code Analysis and Repair Engine.
+Your job is NOT simply to generate a code review.
+You must perform a complete static analysis, determine which findings are real defects, and then produce a COMPLETE, WORKING, REPAIRED VERSION of the user's program.
+The repaired program must preserve the original intended functionality unless the original behavior is clearly incorrect.
+
+PHASE 1 — UNDERSTAND THE ORIGINAL PROGRAM. Read the ENTIRE source code. Identify: programming language, classes, methods/functions, variables and state, inputs, outputs, control flow, data flow, dependencies. Infer the intended behavior from the code. Do NOT assume functionality that is not present. Do NOT invent requirements. Build an internal model of how the program is supposed to work.
+
+PHASE 2 — COMPLETE BUG ANALYSIS. Analyze the ENTIRE program. Check COMPILE-TIME (syntax errors, invalid imports, undefined variables/methods, incorrect types, invalid calls, missing returns, unreachable code), LOGIC (wrong conditions/operators/calculations/returns, wrong variables/state, off-by-one, bad loops, infinite loops, bad branching/ordering/comparisons), RUNTIME (null dereference, index out of bounds, concurrent modification, arithmetic errors, class cast, input mismatch, missing elements, resource leaks, bad file/resource handling, unhandled exceptions), INPUT (invalid/empty/boundary/unexpected input, bad parsing, missing validation), DATA (bad collection use, bad init, stale state, mutation problems), SECURITY (injection, unsafe deserialization, path traversal, exposed secrets, insecure input, dangerous commands), CONCURRENCY (race conditions, unsafe shared state, synchronization), PERFORMANCE (only when it can realistically matter).
+
+PHASE 3 — CLASSIFY FINDINGS. BUG = confirmed defect causing incorrect behavior, crash, compilation failure, security problem, or broken functionality. WARNING = possible risk/robustness concern/edge case that does not necessarily break normal behavior. SUGGESTION = quality/readability/maintainability/architecture improvement, not a defect. Do NOT classify theoretical possibilities or best practices as bugs. Do NOT inflate the bug count. For every BUG, prove the code can actually fail.
+
+PHASE 4 — VERIFY EACH BUG. For every suspected bug: locate the exact line, explain the execution path, determine the triggering input/state, the actual result, the expected result, and confirm it is genuinely caused by the source code. If you cannot prove it, downgrade to WARNING.
+
+PHASE 5 — REPAIR STRATEGY. Do NOT blindly patch lines. If the architecture is sound and the bug is safely fixable locally, apply a minimal targeted fix; else reconstruct the affected logic. If the program is severely broken or patching would create new problems, rebuild the affected component from scratch preserving intended functionality. Never rewrite working code unnecessarily.
+
+PHASE 6 — REBUILD RULES. Preserve purpose, valid inputs/outputs, features, and responsibilities. Remove broken logic instead of layering patches. Clean idiomatic code, appropriate validation, realistic exception handling, no unnecessary dependencies, no new functionality unless required to fix.
+
+PHASE 7 — SELF-VERIFY THE REPAIRED CODE. Re-analyze the FIXED code: does it compile, valid imports/variables/methods/returns/syntax, no new bugs, original functionality works, every bug fixed, complete. Mentally test normal, invalid, boundary, empty, repeated, and exception paths. Regenerate internally if incomplete.
+
+PHASE 8 — COMPLETENESS. The repair must contain the ENTIRE repaired source file from imports to final brace. Never truncate, never placeholders ("// rest of code", "...", "same as above").
+
+SCORING: 90-100 no confirmed bugs, minor warnings/suggestions only. 75-89 warnings/minor defects. 50-74 one or more meaningful bugs. 25-49 multiple serious bugs or broken functionality. 0-24 severely broken or does not compile. Do not lower the score merely for missing best practices.
+
+Return STRICT JSON only — no markdown fences, no commentary outside the JSON — with exactly this structure:
+{
+  "summary": {"text": "2-3 sentence overall assessment", "score": 0-100 integer for overall code quality},
+  "bugs": [{"severity": "CRITICAL|HIGH|MEDIUM|LOW", "title": "short title", "line": line number or null, "category": "e.g. off-by-one", "detail": "what is wrong and why", "trigger": "input/state that triggers it", "expected": "correct behavior", "actual": "buggy behavior", "fix_explanation": "how to fix", "confidence": 0-100}],
+  "warnings": [{"severity": "LOW|MEDIUM", "title": "short title", "line": line number or null, "detail": "risk explanation and when it matters", "confidence": 0-100}],
+  "security_issues": [{"severity": "CRITICAL|HIGH|MEDIUM|LOW", "title": "short title", "line": line number or null, "detail": "risk explanation", "fix": "how to fix"}],
+  "code_quality": [{"category": "STRUCTURE|READABILITY|MAINTAINABILITY|PERFORMANCE|RESOURCE_MANAGEMENT|EXTENSIBILITY", "detail": "specific observation"}],
+  "suggestions": [{"title": "short title", "detail": "improvement explanation"}],
+  "complexity": {"time": {"value": "e.g. O(n log n)", "explanation": "one sentence"}, "space": {"value": "e.g. O(n)", "explanation": "one sentence"}},
+  "repair": {"performed": true, "strategy": "MINIMAL_FIX|RECONSTRUCTED|FULL_REWRITE|NO_FIX_REQUIRED", "verification": {"complete": true, "compilation_checked": true, "logic_rechecked": true, "new_bugs_detected": false}, "fixed_code": "ENTIRE COMPLETE SOURCE CODE HERE or null if nothing material to fix"}
+}
+Rules: empty arrays ([]) when there is nothing to report — never omit keys. Be specific to the actual code. Keep each string concise. Accuracy > bug count. Never invent a bug, a fix, or incomplete code."""
+
+
+def _extract_review_json(text: str) -> Dict[str, Any]:
+    """Tolerantly extract the review JSON object from model output."""
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        # strip ```json ... ``` fences
+        cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+        cleaned = re.sub(r"\s*```$", "", cleaned)
+    try:
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    # last resort: grab the largest {...} block
+    try:
+        start = cleaned.index("{")
+        end = cleaned.rindex("}") + 1
+        parsed = json.loads(cleaned[start:end])
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    # salvage: responses cut off by token limits — cut back to the last
+    # finished object/array, auto-close brackets, parse the partial result
+    return _salvage_truncated_json(cleaned)
+
+
+def _close_brackets(s: str) -> Optional[str]:
+    """String-aware bracket auto-closer; drops a dangling partial string."""
+    in_str = False
+    esc = False
+    for ch in s:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            if in_str:
+                esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+    if in_str:
+        li = s.rfind('"')
+        if li <= 0:
+            return None
+        s = s[:li]
+    in_str = False
+    esc = False
+    stack: list = []
+    for ch in s:
+        if esc:
+            esc = False
+            continue
+        if ch == "\\":
+            if in_str:
+                esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in ("}", "]"):
+            if stack and stack[-1] == ch:
+                stack.pop()
+            else:
+                return None
+    s = re.sub(r",\s*$", "", s)
+    while stack:
+        s += stack.pop()
+    return s
+
+
+def _salvage_truncated_json(text: str) -> Dict[str, Any]:
+    start = text.find("{")
+    if start < 0:
+        return {}
+    body = text[start:]
+    cuts = [len(body)]
+    idx = len(body)
+    for _ in range(10):
+        c1 = body.rfind("},", 0, idx - 1)
+        c2 = body.rfind("],", 0, idx - 1)
+        cut = max(c1 + 2 if c1 != -1 else -1, c2 + 2 if c2 != -1 else -1)
+        if cut <= 0:
+            break
+        cuts.append(cut)
+        idx = cut - 1
+    for cut in cuts:
+        closed = _close_brackets(body[:cut])
+        if not closed:
+            continue
+        try:
+            parsed = json.loads(closed)
+            if isinstance(parsed, dict) and parsed:
+                return parsed
+        except Exception:
+            continue
+    return {}
+
+
+def _normalize_review(parsed: Dict[str, Any], raw: str) -> Dict[str, Any]:
+    """Guarantee the full review shape even if the model skips keys."""
+    def _list(v: Any) -> list:
+        return v if isinstance(v, list) else []
+
+    def _cx(v: Any) -> Dict[str, str]:
+        if isinstance(v, dict):
+            return {
+                "value": str(v.get("value", "—")),
+                "explanation": str(v.get("explanation", "")),
+            }
+        return {"value": str(v or "—"), "explanation": ""}
+
+    def _score(v: Any) -> int:
+        try:
+            s = int(v)
+        except Exception:
+            return 0
+        return max(0, min(100, s))
+
+    summary_raw = parsed.get("summary")
+    summary_text = (
+        summary_raw.get("text", "")
+        if isinstance(summary_raw, dict)
+        else str(summary_raw or "")
+    )
+    score_raw = parsed.get("score")
+    if score_raw is None and isinstance(summary_raw, dict):
+        score_raw = summary_raw.get("score")
+
+    cx_block = parsed.get("complexity") if isinstance(parsed.get("complexity"), dict) else {}
+    repair_block = parsed.get("repair") if isinstance(parsed.get("repair"), dict) else {}
+    fixed_raw = parsed.get("fixed_code")
+    if fixed_raw is None:
+        fixed_raw = repair_block.get("fixed_code")
+    return {
+        "summary": str(summary_text or (raw[:500] if raw else "")),
+        "score": _score(score_raw),
+        "bugs": _list(parsed.get("bugs")),
+        "warnings": _list(parsed.get("warnings")),
+        "suggestions": _list(parsed.get("suggestions")),
+        "time_complexity": _cx(parsed.get("time_complexity") if parsed.get("time_complexity") is not None else cx_block.get("time")),
+        "space_complexity": _cx(parsed.get("space_complexity") if parsed.get("space_complexity") is not None else cx_block.get("space")),
+        "security": _list(parsed.get("security") if parsed.get("security") is not None else parsed.get("security_issues")),
+        "quality": _list(parsed.get("quality") if parsed.get("quality") is not None else parsed.get("code_quality")),
+        "improvements": [str(x) for x in _list(parsed.get("improvements"))],
+        "fixed_code": fixed_raw if isinstance(fixed_raw, str) else None,
+        "repair_strategy": repair_block.get("strategy") if isinstance(repair_block.get("strategy"), str) else None,
+        "status": "success",
+    }
+
+
+@app.post("/ai/review")
+async def ai_code_review(
+    body: CodeReviewRequest = Body(...),
+    authorization: Optional[str] = Header(None),
+    x_user_email: Optional[str] = Header(None),
+):
+    """Structured AI code review: bugs, complexity, security, quality, fixes."""
+    groq_api_key = os.environ.get("GROQ_API_KEY", "")
+    if not groq_api_key:
+        raise HTTPException(500, "Groq API key not configured")
+
+    code = (body.code or "").strip()
+    if not code:
+        raise HTTPException(400, "No code provided")
+    if len(code) > 30000:
+        raise HTTPException(400, "Code too large (max 30KB)")
+
+    language = (body.language or "javascript").strip().lower() or "javascript"
+
+    try:
+        client = Groq(api_key=groq_api_key)
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[
+                {"role": "system", "content": REVIEW_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Review this {language} code:\n\n{code}",
+                },
+            ],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        parsed = _extract_review_json(raw)
+        if not parsed:
+            # Model didn't return JSON — still return a usable shape.
+            return {
+                **_normalize_review({}, raw),
+                "summary": raw[:800] or "Review unavailable",
+                "status": "partial",
+            }
+        return _normalize_review(parsed, raw)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Groq Review Error: {e}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(500, f"AI service error: {str(e)}")
 
 
 @app.post("/ai/insights")
