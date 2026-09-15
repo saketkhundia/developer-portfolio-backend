@@ -34,8 +34,12 @@ except Exception as e:
 from github import fetch_github_data
 from leetcode import fetch_leetcode_data
 from analytics import calculate_skill_score
+from exec_service import router as exec_router
+from execution_engine import router as execute_router
 
 app = FastAPI()
+app.include_router(exec_router)
+app.include_router(execute_router)
 
 # allow_origins cannot be '*' when credentials=True; specify the
 # frontend origin(s) explicitly. You can set FRONTEND_ORIGINS to a
