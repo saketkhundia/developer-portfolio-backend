@@ -31,7 +31,7 @@ except Exception as e:
     print("See MONGODB_SETUP.md for instructions.")
     db = None
 
-from github import fetch_github_data
+from github import fetch_github_data, fetch_repo_tree
 from leetcode import fetch_leetcode_data
 from analytics import calculate_skill_score
 from exec_service import router as exec_router
@@ -847,6 +847,24 @@ def analyze(username: str):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch GitHub data: {str(e)}")
+
+
+@app.get("/repo-tree/{owner}/{repo}")
+def repo_tree(owner: str, repo: str):
+    """Return a compact recursive file tree for a repository (hover preview)."""
+    import re as _re
+    if not _re.match(r"^[A-Za-z0-9_.-]+$", owner or "") or not _re.match(r"^[A-Za-z0-9_.-]+$", repo or ""):
+        raise HTTPException(status_code=400, detail="Invalid owner or repo name")
+    try:
+        return fetch_repo_tree(owner, repo)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except RuntimeError as e:
+        msg = str(e)
+        code = 429 if "rate limit" in msg.lower() else 502
+        raise HTTPException(status_code=code, detail=msg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch repo tree: {str(e)}")
 
 
 @app.get("/leetcode/{username}")
