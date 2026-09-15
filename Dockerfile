@@ -23,8 +23,8 @@ COPY exec_service.py .
 COPY execution_engine.py .
 COPY lang_config.py .
 
-# Expose port (Cloud Run uses 8080)
+# Expose port (Render sets $PORT; Cloud Run uses 8080)
 EXPOSE 8080
 
-# Run the app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run the app — respect $PORT on Render, default 8080 locally/Cloud Run
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080}"]
