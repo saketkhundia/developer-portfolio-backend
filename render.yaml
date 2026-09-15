@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: developer-portfolio-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
