@@ -44,8 +44,17 @@ app.include_router(execute_router)
 # allow_origins cannot be '*' when credentials=True; specify the
 # frontend origin(s) explicitly. You can set FRONTEND_ORIGINS to a
 # comma-separated list of allowed origins (e.g. http://localhost:3000).
-front = os.environ.get("FRONTEND_ORIGINS", "http://localhost:3000,https://deviq.online,https://developerintelligencedashboard.web.app")
+# GitHub Pages (saket21s.github.io) must be allowed for static export.
+front = os.environ.get(
+    "FRONTEND_ORIGINS",
+    "http://localhost:3000,https://deviq.online,https://www.deviq.online,https://developerintelligencedashboard.web.app,https://saket21s.github.io,https://saket21s.github.io/deviq",
+)
 allow_list = [o.strip() for o in front.split(",") if o.strip()]
+# Render may provide FRONTEND_ORIGINS without the GH Pages origin — always
+# ensure static hosting is reachable for direct CORS fetches.
+for _o in ["https://saket21s.github.io", "https://saket21s.github.io/deviq"]:
+    if _o not in allow_list:
+        allow_list.append(_o)
 print(f"✅ CORS allowed origins: {allow_list}")
 
 app.add_middleware(
