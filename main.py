@@ -505,6 +505,311 @@ async def ai_code_review(
         raise HTTPException(500, f"AI service error: {str(e)}")
 
 
+OPTIMIZE_SYSTEM_PROMPT = """You are DevIQ's Code Optimization Engine.
+Given a user's program, produce an OPTIMIZED version with better time and/or space complexity where possible, without changing its observable behavior.
+
+ANALYZE: read the entire program, estimate the current time and space complexity (Big-O), and spot the bottlenecks (nested loops, repeated work, exponential recursion, unnecessary sorting, redundant allocations, wasteful data structures, I/O in loops).
+
+OPTIMIZE: apply only safe, standard techniques (memoization/DP, two-pointers/sliding window, hash maps/sets for O(1) lookup, early exits, right data structure, avoid recomputation, iterative instead of exponential recursion, streaming instead of buffering). Keep the same language, inputs, outputs, and public API. If the code is already optimal, return it unchanged and say so.
+
+QUALITY: also note how the rewrite improves code quality (readability, maintainability, robustness) and list remaining areas where the user can still improve.
+
+Return STRICT JSON only — no markdown fences, no commentary outside the JSON — with exactly this structure:
+{
+  "original_time": {"value": "e.g. O(n^2)", "explanation": "why, one sentence"},
+  "original_space": {"value": "e.g. O(n)", "explanation": "why, one sentence"},
+  "optimized_time": {"value": "e.g. O(n)", "explanation": "what changed, one sentence"},
+  "optimized_space": {"value": "e.g. O(1)", "explanation": "what changed, one sentence"},
+  "optimized_code": "ENTIRE COMPLETE OPTIMIZED SOURCE FILE or null if already optimal",
+  "techniques": ["short technique name + one-line why"],
+  "quality_gains": [{"title": "short title", "detail": "how quality improved, one sentence"}],
+  "improvement_areas": [{"area": "COMPLEXITY|STRUCTURE|READABILITY|PERFORMANCE|MEMORY|EDGE_CASES", "detail": "what to improve next", "impact": "HIGH|MEDIUM|LOW"}]
+}
+Rules: empty arrays ([]) when nothing to report — never omit keys. Keep each string concise. Never invent behavior. The optimized code must be complete and runnable, never truncated, never placeholders."""
+
+
+def _normalize_optimization(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Guarantee the full optimization shape even if the model skips keys."""
+    def _cx(v: Any) -> Dict[str, str]:
+        if isinstance(v, dict):
+            return {
+                "value": str(v.get("value", "—")),
+                "explanation": str(v.get("explanation", "")),
+            }
+        return {"value": str(v or "—"), "explanation": ""}
+
+    def _list(v: Any) -> list:
+        return v if isinstance(v, list) else []
+
+    def _gains(v: Any) -> list:
+        out = []
+        for item in _list(v):
+            if isinstance(item, dict):
+                out.append({
+                    "title": str(item.get("title", "") or "Improvement"),
+                    "detail": str(item.get("detail", "") or item.get("description", "") or ""),
+                })
+            else:
+                out.append({"title": "Improvement", "detail": str(item)})
+        return out
+
+    def _areas(v: Any) -> list:
+        out = []
+        for item in _list(v):
+            if isinstance(item, dict):
+                out.append({
+                    "area": str(item.get("area", "") or item.get("category", "") or "general"),
+                    "detail": str(item.get("detail", "") or item.get("feedback", "") or ""),
+                    "impact": str(item.get("impact", "") or "MEDIUM").upper(),
+                })
+            else:
+                out.append({"area": "general", "detail": str(item), "impact": "MEDIUM"})
+        return out
+
+    code = parsed.get("optimized_code")
+    return {
+        "original_time": _cx(parsed.get("original_time") or parsed.get("originalTime")),
+        "original_space": _cx(parsed.get("original_space") or parsed.get("originalSpace")),
+        "optimized_time": _cx(parsed.get("optimized_time") or parsed.get("optimizedTime")),
+        "optimized_space": _cx(parsed.get("optimized_space") or parsed.get("optimizedSpace")),
+        "optimized_code": code if isinstance(code, str) else None,
+        "techniques": [str(x) if not isinstance(x, dict) else str(x.get("title", x)) for x in _list(parsed.get("techniques"))],
+        "quality_gains": _gains(parsed.get("quality_gains") if parsed.get("quality_gains") is not None else parsed.get("qualityGains")),
+        "improvement_areas": _areas(parsed.get("improvement_areas") if parsed.get("improvement_areas") is not None else parsed.get("improvementAreas")),
+        "status": "success",
+    }
+
+
+@app.post("/ai/optimize")
+async def ai_code_optimize(
+    body: CodeReviewRequest = Body(...),
+    authorization: Optional[str] = Header(None),
+    x_user_email: Optional[str] = Header(None),
+):
+    """Optimized rewrite: better time/space complexity + quality gains + next steps."""
+    groq_api_key = os.environ.get("GROQ_API_KEY", "")
+    if not groq_api_key:
+        raise HTTPException(500, "Groq API key not configured")
+
+    code = (body.code or "").strip()
+    if not code:
+        raise HTTPException(400, "No code provided")
+    if len(code) > 30000:
+        raise HTTPException(400, "Code too large (max 30KB)")
+
+    language = (body.language or "javascript").strip().lower() or "javascript"
+
+    try:
+        client = Groq(api_key=groq_api_key)
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[
+                {"role": "system", "content": OPTIMIZE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Optimize this {language} code for time and space complexity:\n\n{code}",
+                },
+            ],
+            temperature=0.3,
+            max_tokens=4000,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        parsed = _extract_review_json(raw)
+        if not parsed:
+            return {
+                **_normalize_optimization({}),
+                "status": "partial",
+            }
+        return _normalize_optimization(parsed)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Groq Optimize Error: {e}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(500, f"AI service error: {str(e)}")
+
+
+class ExplainRequest(BaseModel):
+    code: str
+    language: Optional[str] = "javascript"
+    line: Optional[int] = None
+    question: Optional[str] = None
+
+
+EXPLAIN_SYSTEM_PROMPT = """You are DevIQ's Code Explainer. Explain code the way a patient senior developer explains to a beginner: plain simple words, no jargon without a one-line definition, short sentences.
+
+FULL EXPLANATION (no line/question given): read the entire program and explain what it does overall, then walk through it step by step in execution order (imports/setup, each function/loop/condition, what goes in and out). Then explain EVERY non-blank line one by one in simple words, in line order. End with the key concepts the reader should learn next.
+
+FOCUSED QUESTION (a line number and/or a question is given): answer that specific line/question simply, quote the line, say what it does, why it is there, and what would break without it. Still keep it beginner-friendly.
+
+Return STRICT JSON only — no markdown fences, no commentary outside the JSON — with exactly this structure:
+{
+  "overview": "what the program does, 2-3 simple sentences",
+  "walkthrough": [{"step": "short step title", "detail": "what happens, one or two simple sentences"}],
+  "key_concepts": ["concept + 5-word why"],
+  "lines": [{"line": 1, "code": "exact line text", "explanation": "what this line does, under 12 simple words"}],
+  "line_explanation": {"line": line number or null, "code": "the quoted line or null", "explanation": "simple explanation or null"},
+  "answer": "answer to the user's question, or null when no question was asked"
+}
+Rules: max 8 walkthrough steps, max 5 key concepts, cover EVERY non-blank line in lines[] in order. Empty arrays ([]) / null when nothing applies — never omit keys. Keep every string concise and simple."""
+
+
+def _normalize_explanation(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    """Guarantee the full explanation shape even if the model skips keys."""
+    def _list(v: Any) -> list:
+        return v if isinstance(v, list) else []
+
+    def _str(v: Any) -> str:
+        return str(v) if isinstance(v, str) else (str(v) if v is not None else "")
+
+    steps = []
+    for item in _list(
+        parsed.get("walkthrough")
+        or parsed.get("steps")
+        or parsed.get("explanation_steps")
+    ):
+        if isinstance(item, dict):
+            steps.append({
+                "step": _str(item.get("step") or item.get("title") or item.get("name") or item.get("t") or "Step"),
+                "detail": _str(item.get("detail") or item.get("description") or item.get("message") or item.get("d") or item.get("text") or ""),
+            })
+        else:
+            steps.append({"step": "Step", "detail": _str(item)})
+
+    concepts = []
+    for c in _list(
+        parsed.get("key_concepts")
+        if parsed.get("key_concepts") is not None
+        else (parsed.get("keyConcepts") if parsed.get("keyConcepts") is not None else parsed.get("concepts"))
+    ):
+        if isinstance(c, dict):
+            concepts.append(_str(c.get("title") or c.get("name") or c.get("concept") or c))
+        else:
+            concepts.append(_str(c))
+
+    le_raw = parsed.get("line_explanation") if isinstance(parsed.get("line_explanation"), dict) else None
+    line_exp = None
+    if le_raw:
+        try:
+            ln = int(le_raw.get("line")) if le_raw.get("line") is not None else None
+        except Exception:
+            ln = None
+        line_exp = {
+            "line": ln,
+            "code": _str(le_raw.get("code", "")),
+            "explanation": _str(le_raw.get("explanation", "") or le_raw.get("detail", "")),
+        }
+        if not line_exp["explanation"] and ln is None and not line_exp["code"]:
+            line_exp = None
+
+    answer = parsed.get("answer")
+    overview = _str(parsed.get("overview") or parsed.get("summary") or "")
+    line_rows = []
+    for item in _list(
+        parsed.get("lines")
+        if parsed.get("lines") is not None
+        else (parsed.get("line_by_line") if parsed.get("line_by_line") is not None else parsed.get("per_line"))
+    ):
+        if isinstance(item, dict):
+            try:
+                ln = int(item.get("line")) if item.get("line") is not None else None
+            except Exception:
+                ln = None
+            cd = _str(item.get("code") or item.get("text") or "")
+            exp = _str(item.get("explanation") or item.get("detail") or item.get("description") or "")
+            if ln is None and not cd and not exp:
+                continue
+            line_rows.append({"line": ln or 0, "code": cd[:200], "explanation": exp})
+            if len(line_rows) >= 60:
+                break
+    return {
+        "overview": overview,
+        "walkthrough": steps,
+        "key_concepts": concepts,
+        "lines": line_rows,
+        "line_explanation": line_exp,
+        "answer": str(answer) if isinstance(answer, str) and answer.strip() else None,
+        "status": "success",
+    }
+
+
+@app.post("/ai/explain")
+async def ai_code_explain(
+    body: ExplainRequest = Body(...),
+    authorization: Optional[str] = Header(None),
+    x_user_email: Optional[str] = Header(None),
+):
+    """Simple step-by-step code explanation + focused line/question answers."""
+    groq_api_key = os.environ.get("GROQ_API_KEY", "")
+    if not groq_api_key:
+        raise HTTPException(500, "Groq API key not configured")
+
+    code = (body.code or "").strip()
+    if not code:
+        raise HTTPException(400, "No code provided")
+    if len(code) > 30000:
+        raise HTTPException(400, "Code too large (max 30KB)")
+
+    language = (body.language or "javascript").strip().lower() or "javascript"
+    line = body.line if isinstance(body.line, int) and body.line > 0 else None
+    question = (body.question or "").strip() or None
+
+    focus = ""
+    if line is not None or question:
+        lines = code.split("\n")
+        quoted = ""
+        if line is not None and 1 <= line <= len(lines):
+            quoted = lines[line - 1].strip()
+        focus = f"\nFocus: explain line {line} (\"{quoted}\")" if line is not None else ""
+        if question:
+            focus += f"\nUser question: {question}"
+
+    try:
+        client = Groq(api_key=groq_api_key)
+        completion = client.chat.completions.create(
+            model="openai/gpt-oss-120b",
+            messages=[
+                {"role": "system", "content": EXPLAIN_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Explain this {language} code in very simple words, step by step:{focus}\n\n{code}",
+                },
+            ],
+            temperature=0.5,
+            max_tokens=2000,
+        )
+        raw = (completion.choices[0].message.content or "").strip()
+        parsed = _extract_review_json(raw)
+        if not parsed:
+            # Model didn't return JSON (plain-text explanation) — don't throw
+            # it away. Return the raw text as the overview so the UI always
+            # has something to show instead of "couldn't generate".
+            fallback = _normalize_explanation({})
+            fallback["overview"] = raw[:3000] or "Explanation unavailable"
+            fallback["status"] = "partial"
+            return fallback
+        normalized = _normalize_explanation(parsed)
+        if (
+            not normalized["overview"]
+            and not normalized["walkthrough"]
+            and not normalized["answer"]
+            and not normalized["line_explanation"]
+            and not normalized["key_concepts"]
+        ):
+            # JSON parsed but carried no usable content — same fallback.
+            normalized["overview"] = raw[:3000] or "Explanation unavailable"
+            normalized["status"] = "partial"
+        return normalized
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Groq Explain Error: {e}")
+        import traceback
+        print(traceback.format_exc())
+        raise HTTPException(500, f"AI service error: {str(e)}")
+
+
 @app.post("/ai/insights")
 async def ai_insights(
     body: ChatRequest = Body(...),
@@ -535,11 +840,14 @@ async def ai_insights(
         ]
         
         # Call Groq API with llama-3.1-8b (fast, available model)
+        # NOTE: keep this budget generous — the review page's /ai/insights
+        # fallback issues small section calls (analysis + optimized code)
+        # that get truncated at tiny limits.
         completion = client.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=messages,
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=1500,
         )
         
         result = completion.choices[0].message.content
