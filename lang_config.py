@@ -224,10 +224,17 @@ def source_filename(lang: str, code: str, filename: Optional[str]) -> str:
 
 def compile_argv_for(lang: str, src: str) -> Optional[List[str]]:
     """Batch/session-shared compile command. Java always compiles the user
-    file by its (possibly class-derived) name; session extras are separate."""
+    file by its (possibly class-derived) name; session extras are separate.
+
+    javac flags are tuned for short-lived playground compiles on small
+    containers: -proc:none skips annotation-processor discovery (nothing on
+    our classpath uses it — Lombok etc. already can't resolve), and the -J
+    flags boot a lean single-threaded JVM instead of the default
+    throughput-tuned one, which only pays off for long builds."""
     spec = LANGS[lang]
     if spec.id == "java":
-        return ["javac", src]
+        return ["javac", "-proc:none",
+                "-J-XX:TieredStopAtLevel=1", "-J-XX:+UseSerialGC", src]
     return list(spec.compile_argv) if spec.compile_argv else None
 
 
