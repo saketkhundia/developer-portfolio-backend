@@ -24,6 +24,7 @@ import os
 import re
 import shutil
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
@@ -79,6 +80,10 @@ def safe_source_name(name: object, fallback: str) -> str:
 
 def child_env(tmp: str) -> Dict[str, str]:
     """Minimal, secret-free environment for child processes."""
+    try:
+        os.makedirs(GOCACHE_DIR, exist_ok=True)
+    except Exception:
+        pass
     env = {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "LANG": "C.UTF-8",
@@ -90,13 +95,37 @@ def child_env(tmp: str) -> Dict[str, str]:
         "GOTOOLCHAIN": "local",  # never phone home for toolchains
         "GOPROXY": "off",        # stdlib-only builds work offline
         "GOFLAGS": "-mod=mod",
-        "GOCACHE": os.path.join(tmp, ".gocache"),
+        # Shared persistent build cache (see GOCACHE_DIR): Go reuses compiled
+        # stdlib packages across runs (~0.2s) instead of rebuilding them per
+        # run (~2.5s here, 10-30s on small production containers).
+        # The Go build cache is safe for concurrent use.
+        "GOCACHE": GOCACHE_DIR,
     }
+    return env
+
+
+def _shared_gocache() -> str:
+    """One persistent Go build cache for all runs.
+
+    It used to live inside the per-run temp dir (wiped after every run), so
+    `go build` recompiled the stdlib from scratch each time. A shared dir
+    keeps those artifacts: override with DEVIQ_GOCACHE if needed.
+    """
+    d = os.environ.get("DEVIQ_GOCACHE") or "/opt/deviq-gocache"
     try:
-        os.makedirs(env["GOCACHE"], exist_ok=True)
+        os.makedirs(d, exist_ok=True)
+        return d
     except Exception:
         pass
-    return env
+    d = os.path.join(tempfile.gettempdir(), "deviq-gocache")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+GOCACHE_DIR = _shared_gocache()
 
 
 @dataclass

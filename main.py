@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from dotenv import load_dotenv
 from groq import Groq
 import pymongo
@@ -93,6 +95,17 @@ scheduler.add_job(func=keep_alive_ping, trigger="interval", minutes=14, id="keep
 def startup_event():
     scheduler.start()
     print("✅ Keep-alive scheduler started (pings every 14 minutes)")
+    # Warm toolchains in the background so the first user runs don't pay
+    # cold-start costs (JVM load, Go stdlib compile, page cache). Daemon
+    # thread: never blocks boot, never fails it. Opt out with DEVIQ_WARMUP=0.
+    def _warmup_soon():
+        time.sleep(3)
+        try:
+            from warmup import warm_toolchains
+            warm_toolchains()
+        except Exception as e:
+            print(f"⚠️  Toolchain warm-up error: {e}")
+    threading.Thread(target=_warmup_soon, daemon=True).start()
 
 # Shutdown scheduler on app shutdown
 @app.on_event("shutdown")
