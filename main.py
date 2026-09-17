@@ -1098,7 +1098,11 @@ def get_contributions(username: str):
         data = response.json()
         
         if "errors" in data:
-            raise HTTPException(400, f"GitHub GraphQL error: {data['errors']}")
+            errs = data["errors"] if isinstance(data["errors"], list) else [data["errors"]]
+            if any("NOT_FOUND" in str(e.get("type", "")) or "Could not resolve to a User" in str(e.get("message", "")) for e in errs if isinstance(e, dict)):
+                raise HTTPException(404, f"GitHub user '{username}' not found")
+            first_msg = next((str(e.get("message", "")) for e in errs if isinstance(e, dict) and e.get("message")), "")
+            raise HTTPException(400, f"GitHub error: {first_msg[:160] or 'request failed'}")
         
         if not data.get("data") or not data["data"].get("user"):
             raise HTTPException(404, f"GitHub user not found: {username}")
