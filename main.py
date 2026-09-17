@@ -823,6 +823,27 @@ async def ai_code_explain(
         raise HTTPException(500, f"AI service error: {str(e)}")
 
 
+CHAT_SYSTEM_PROMPT = """You are DevIQ AI — a sharp, encouraging senior engineering coach inside the DevIQ app.
+You help developers understand their GitHub / LeetCode / Codeforces profile, scores, and progress, and give focused next steps.
+
+PERSONALIZATION: When profile context is provided, reference real numbers (scores, solved counts, ratings). Never invent stats. If no profile data is available, say so briefly and suggest one concrete analysis to run — do not lecture generically.
+
+STYLE — be concise and skimmable:
+- Answer the actual question FIRST in 2-4 direct sentences.
+- Then give at most 3-5 short actionable bullets (use `- `, keep each bullet to 1-2 lines).
+- Use at most 2-3 short `### ` sub-headings, only for longer answers. Bold key terms sparingly.
+- Keep replies under ~220 words unless the user explicitly asks for a detailed plan.
+- End with exactly ONE crisp next step or follow-up question — not a list of 8 tasks.
+
+STRICT FORMATTING RULES (critical):
+- Use clean Markdown: headings, bullets, `inline code` for problem/term names, fenced code blocks only for real code.
+- NEVER emit wide markdown tables with full sentences inside cells (e.g. | What to Do | Why It Helps | How to Start |). They render badly in chat. Prefer compact bullet lists instead.
+- Only use a markdown table if the user explicitly asks for one — then keep cells under 8 words each and max 4 data rows plus header.
+- No emoji spam (max 1 per reply, or none). No filler intros like "Great question!". No repeating the same generic 8-step DSA plan to everyone."""
+
+CHAT_HISTORY_LIMIT = 12
+
+
 @app.post("/ai/insights")
 async def ai_insights(
     body: ChatRequest = Body(...),
@@ -833,37 +854,51 @@ async def ai_insights(
     groq_api_key = os.environ.get("GROQ_API_KEY", "")
     if not groq_api_key:
         raise HTTPException(500, "Groq API key not configured")
-    
+
+    prompt = (body.prompt or "").strip()
+    if not prompt:
+        raise HTTPException(400, "No prompt provided")
+    # Guard against runaway prompts (chat page concatenates history into prompt).
+    if len(prompt) > 12000:
+        prompt = prompt[-12000:]
+
     try:
         # Initialize Groq client with only the API key
         client = Groq(
             api_key=groq_api_key,
         )
-        
-        # Prepare messages for Groq API
-        messages = [
+
+        # Build messages: strong formatting system prompt + optional
+        # structured history (new clients) or legacy concatenated prompt.
+        messages: list = [
             {
                 "role": "system",
-                "content": "You are a helpful AI assistant for developers. You help them understand their coding profiles, analyze their skills, and provide insights about their progress. Be concise, encouraging, and practical in your responses."
-            },
-            {
-                "role": "user",
-                "content": body.prompt
+                "content": CHAT_SYSTEM_PROMPT,
             }
         ]
-        
-        # Call Groq API with llama-3.1-8b (fast, available model)
-        # NOTE: keep this budget generous — the review page's /ai/insights
-        # fallback issues small section calls (analysis + optimized code)
-        # that get truncated at tiny limits.
+        history = body.conversation_history or []
+        if isinstance(history, list) and history:
+            for m in history[-CHAT_HISTORY_LIMIT:]:
+                if not isinstance(m, dict):
+                    continue
+                role = m.get("role")
+                content = str(m.get("content", "") or "").strip()
+                if role in ("user", "assistant") and content:
+                    messages.append({"role": role, "content": content[:2000]})
+            messages.append({"role": "user", "content": prompt[:6000]})
+        else:
+            messages.append({"role": "user", "content": prompt})
+
         completion = client.chat.completions.create(
             model="openai/gpt-oss-120b",
             messages=messages,
-            temperature=0.7,
-            max_tokens=1500,
+            temperature=0.6,
+            max_tokens=1200,
         )
-        
-        result = completion.choices[0].message.content
+
+        result = (completion.choices[0].message.content or "").strip()
+        if not result:
+            raise HTTPException(500, "AI returned an empty response")
         return {
             "result": result,
             "status": "success"
