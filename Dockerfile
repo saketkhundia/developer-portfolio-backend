@@ -25,6 +25,7 @@ RUN mkdir -p /opt/deviq-gocache && \
 
 # Copy app files
 COPY main.py .
+COPY security.py .
 COPY github.py .
 COPY leetcode.py .
 COPY analytics.py .
@@ -32,6 +33,15 @@ COPY exec_service.py .
 COPY execution_engine.py .
 COPY lang_config.py .
 COPY warmup.py .
+
+# Run as a non-root user: code execution endpoints already assume an
+# untrusted workload, and nothing in the app needs root. HOME points at /tmp
+# (writable) since toolchains probe it; bytecode writes are disabled.
+RUN useradd -m -u 10001 deviq \
+  && chown -R deviq:deviq /app /opt/deviq-gocache
+ENV HOME=/tmp \
+    PYTHONDONTWRITEBYTECODE=1
+USER deviq
 
 # Expose port (Render sets $PORT; Cloud Run uses 8080)
 EXPOSE 8080

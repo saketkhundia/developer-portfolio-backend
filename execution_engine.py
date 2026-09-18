@@ -53,8 +53,12 @@ import time
 from typing import Optional
 
 from fastapi import APIRouter
+from fastapi import Depends
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from security import current_user_email, enforce_rate_limit
 
 from lang_config import (
     LANGS,
@@ -129,7 +133,12 @@ class ExecuteRequest(BaseModel):
 
 
 @router.post("/execute")
-def execute(req: ExecuteRequest):
+def execute(
+    req: ExecuteRequest,
+    request: Request,
+    email: str = Depends(current_user_email),
+):
+    enforce_rate_limit(request, "execute", max_calls=30, window_s=3600, user=email)
     t0 = time.perf_counter()
     elapsed = lambda: time.perf_counter() - t0
 

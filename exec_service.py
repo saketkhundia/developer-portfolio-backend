@@ -41,8 +41,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import HTTPException
+from fastapi import Request
 from pydantic import BaseModel
+
+from security import current_user_email, enforce_rate_limit
 
 from lang_config import (
     LANGS,
@@ -73,6 +77,7 @@ class Session:
     id: str
     language: str
     tmp: str
+    owner: str = ""  # session-token identity that created it (never exposed)
     state: str = "compiling"  # compiling|running|exited|failed|killed|timeout
     compile_output: str = ""
     stdout: str = ""
@@ -181,6 +186,14 @@ def _get_session(sid: str) -> Session:
     return sess
 
 
+def _get_owned_session(sid: str, email: str) -> Session:
+    """Session lookup scoped to its owner (404 either way: no oracle)."""
+    sess = _get_session(sid)
+    if sess.owner and sess.owner != email:
+        raise HTTPException(404, "Unknown or expired session")
+    return sess
+
+
 # ---------------------------------------------------------------- models
 
 class StartRequest(BaseModel):
@@ -210,7 +223,12 @@ def exec_languages():
 
 
 @router.post("/start")
-def exec_start(body: StartRequest):
+def exec_start(
+    body: StartRequest,
+    request: Request,
+    email: str = Depends(current_user_email),
+):
+    enforce_rate_limit(request, "exec-start", max_calls=30, window_s=3600, user=email)
     if not EXEC_ENABLED:
         raise HTTPException(501, "Interactive execution is disabled on this backend")
     lang = (body.language or "").lower().strip()
@@ -231,6 +249,10 @@ def exec_start(body: StartRequest):
                    if s.state in ("compiling", "running"))
         if live >= MAX_SESSIONS:
             raise HTTPException(429, "Execution backend is busy, try again")
+        mine = sum(1 for s in _sessions.values()
+                   if s.owner == email and s.state in ("compiling", "running"))
+        if mine >= 4:
+            raise HTTPException(429, "Too many running sessions, wait for one to finish")
 
     sid = uuid.uuid4().hex[:16]
     tmp = tempfile.mkdtemp(prefix=f"deviq-exec-{sid}-")
@@ -238,7 +260,7 @@ def exec_start(body: StartRequest):
     with open(os.path.join(tmp, src_name), "w", encoding="utf-8") as f:
         f.write(code)
 
-    sess = Session(id=sid, language=lang, tmp=tmp)
+    sess = Session(id=sid, language=lang, tmp=tmp, owner=email)
     with _sessions_lock:
         _sessions[sid] = sess
 
@@ -309,8 +331,15 @@ def exec_start(body: StartRequest):
 
 
 @router.get("/poll/{session_id}")
-def exec_poll(session_id: str, so: int = 0, se: int = 0):
-    sess = _get_session(session_id)
+def exec_poll(
+    session_id: str,
+    request: Request,
+    so: int = 0,
+    se: int = 0,
+    email: str = Depends(current_user_email),
+):
+    enforce_rate_limit(request, "exec-poll", max_calls=3600, window_s=3600, user=email)
+    sess = _get_owned_session(session_id, email)
     if so < 0 or se < 0:
         raise HTTPException(400, "Bad offset")
     with sess.lock:
@@ -328,8 +357,13 @@ def exec_poll(session_id: str, so: int = 0, se: int = 0):
 
 
 @router.post("/input")
-def exec_input(body: InputRequest):
-    sess = _get_session(body.session_id)
+def exec_input(
+    body: InputRequest,
+    request: Request,
+    email: str = Depends(current_user_email),
+):
+    enforce_rate_limit(request, "exec-input", max_calls=3600, window_s=3600, user=email)
+    sess = _get_owned_session(body.session_id, email)
     line = body.line if isinstance(body.line, str) else ""
     data = (line + "\n").encode("utf-8")
     if len(data) > MAX_LINE_BYTES + 1:
@@ -351,8 +385,13 @@ def exec_input(body: InputRequest):
 
 
 @router.post("/kill")
-def exec_kill(body: KillRequest):
-    sess = _get_session(body.session_id)
+def exec_kill(
+    body: KillRequest,
+    request: Request,
+    email: str = Depends(current_user_email),
+):
+    enforce_rate_limit(request, "exec-kill", max_calls=600, window_s=3600, user=email)
+    sess = _get_owned_session(body.session_id, email)
     with sess.lock:
         if sess.state in ("running", "compiling"):
             sess.state = "killed"
