@@ -1008,30 +1008,24 @@ async def oauth_login(data: OAuthUserData):
             "updatedAt": datetime.now(timezone.utc).isoformat(),
         }
         
-        # Check if user exists
-        existing_user = users_collection.find_one({"email": email})
-        if not existing_user:
-            payload["createdAt"] = datetime.now(timezone.utc).isoformat()
-        
+        # One cheap indexed read to preserve the original createdAt, then a
+        # single upsert — no second read needed. Returning the payload
+        # directly saves a Mongo round-trip on the latency-critical sign-in path.
+        now = datetime.now(timezone.utc).isoformat()
+        payload["updatedAt"] = now
+        existing = users_collection.find_one({"email": email}, {"_id": 0, "createdAt": 1})
+        payload["createdAt"] = (existing or {}).get("createdAt") or now
+
         # Upsert user
         users_collection.update_one(
             {"email": email},
             {"$set": payload},
             upsert=True
         )
-        
+
         print(f"OAuth profile synced for {email}")
 
-        # Retrieve and return user data
-        user_doc = users_collection.find_one({"email": email})
-
-        if not user_doc:
-            print("OAuth profile write verification failed")
-            raise HTTPException(500, "Could not verify user was created")
-
-        # Remove MongoDB ID from response for cleaner JSON
-        user_data = dict(user_doc)
-        user_data.pop("_id", None)
+        user_data = dict(payload)
         print("OAuth endpoint completed successfully")
         
         return {
